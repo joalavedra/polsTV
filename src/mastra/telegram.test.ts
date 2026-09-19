@@ -204,7 +204,7 @@ describe("SceneHistory", () => {
 describe("sceneChangeMessages", () => {
   it("DMs the new prompter and skips a like message when nothing ended", () => {
     const jobs = sceneChangeMessages({ onAir: scene({ uid: "telegram:1" }), ended: undefined }, "https://watch");
-    expect(jobs).toEqual([{ uid: "telegram:1", text: "You're on air now! Watch: https://watch" }]);
+    expect(jobs).toEqual([{ uid: "telegram:1", text: "You're on air now! Watch polsTV: https://watch" }]);
   });
 
   it("adds a like message only when the ended scene earned at least one like", () => {
