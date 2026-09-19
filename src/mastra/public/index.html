@@ -1742,12 +1742,17 @@
       retrying: "Lost the live video — reconnecting…",
       blocked: "This network is blocking the live video. It needs video.standard.vonage.com " +
         "and WebRTC — try another network, or turn off a VPN or content blocker.",
+      nowebrtc: "This browser has live video (WebRTC) switched off. iPhone Lockdown Mode does that. " +
+        "You can still chat, send ideas and like. To watch here: open this page in Safari, tap the " +
+        "page menu next to the address, and turn Lockdown Mode off for this website.",
     };
     function updateVideoVisibility() {
       offairCard.hidden = hasStream && statusLive;
       // Off air is off air whatever the video layer is doing; the rest only matters while live.
       if (offairCard.hidden) return;
-      offairText.textContent = statusLive ? VIDEO_TEXT[videoState] : OFFAIR_TEXT;
+      // A browser without WebRTC will never show the picture, on air or not, so say that first.
+      if (videoState === "nowebrtc") offairText.textContent = VIDEO_TEXT.nowebrtc;
+      else offairText.textContent = statusLive ? VIDEO_TEXT[videoState] : OFFAIR_TEXT;
     }
     function renderLivePill(live) {
       livePill.classList.toggle("is-live", live);
@@ -1923,6 +1928,15 @@
       // nothing on screen.
       if (typeof OT === "undefined") {
         scheduleReconnect("blocked");
+        return;
+      }
+      // Measured on a real iPhone in Lockdown Mode: RTCPeerConnection and navigator.mediaDevices are
+      // both undefined. Calling into OT there pops Vonage's full-screen "Incompatible Browser"
+      // dialog over our page. Say what is going on ourselves, and do not retry: it cannot change
+      // without a reload.
+      if (typeof RTCPeerConnection === "undefined") {
+        videoState = "nowebrtc";
+        updateVideoVisibility();
         return;
       }
       let creds;
