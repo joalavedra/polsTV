@@ -1,0 +1,854 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>polsTV</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bungee&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #050505;
+    --panel-bg: rgba(12, 12, 14, .55);
+    --panel-border: rgba(255, 255, 255, .16);
+    --text: #f5f5f5;
+    --text-dim: rgba(245, 245, 245, .68);
+    --accent: #ff4742;
+    --radius: 16px;
+    --display-font: 'Bungee', 'Arial Black', sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+  }
+  button, input { font-family: inherit; }
+  button { touch-action: manipulation; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  #video-wrap { position: fixed; inset: 0; background: #000; }
+  #subscriber-container { width: 100%; height: 100%; overflow: hidden; }
+  #subscriber-container video, #subscriber-container object {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover;
+  }
+
+  .pill {
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-radius: 999px;
+    padding: .5rem 1rem;
+    font-size: .85rem;
+    color: var(--text);
+  }
+  .pill-btn { cursor: pointer; border: 1px solid var(--panel-border); }
+  .pill-btn:hover { background: rgba(255, 255, 255, .12); }
+
+  #offair-card {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(90vw, 420px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 1.5rem;
+    border-radius: var(--radius);
+  }
+  #offair-card p { margin: 0; font-size: 1rem; color: var(--text-dim); }
+  /* On mobile the panel covers the lower half; keep the card in the clear upper area. */
+  @media (max-width: 820px) {
+    #offair-card { top: 22%; }
+  }
+
+  .top-center {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: .4rem;
+    z-index: 10;
+    max-width: min(80vw, 560px);
+  }
+  .live-pill { display: flex; align-items: center; gap: .4rem; font-weight: 700; letter-spacing: .04em; }
+  .live-pill.is-live { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
+  .live-pill.is-live .live-dot { animation: livepulse 1.4s ease-in-out infinite; }
+  @keyframes livepulse { 50% { opacity: .3; } }
+  @media (prefers-reduced-motion: reduce) { .live-pill .live-dot { animation: none; } }
+
+  .caption-bar span {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .top-right {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    right: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: .5rem;
+    z-index: 10;
+  }
+
+  #rail {
+    position: fixed;
+    left: 12px;
+    top: calc(env(safe-area-inset-top, 0px) + 148px);
+    bottom: 12px;
+    width: 300px;
+    z-index: 9;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(14px);
+    border-radius: var(--radius);
+    padding: 1rem;
+    overflow-y: auto;
+  }
+  #rail section + section { margin-top: 1.25rem; }
+  #rail h2 {
+    font-size: .75rem;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin: 0 0 .5rem;
+  }
+  .steer-hint { font-size: .75rem; color: var(--text-dim); margin: .25rem 0 0; }
+
+  #panel {
+    position: fixed;
+    right: 12px;
+    top: calc(env(safe-area-inset-top, 0px) + 148px);
+    bottom: 12px;
+    width: 360px;
+    z-index: 9;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(14px);
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  @media (max-width: 820px) {
+    #rail { display: none; }
+    #panel {
+      left: 0;
+      right: 0;
+      top: auto;
+      bottom: 0;
+      width: 100%;
+      height: 52vh;
+      border-radius: 16px 16px 0 0;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    #tab-queue { display: inline-flex !important; }
+  }
+
+  .tablist { display: flex; gap: .25rem; padding: .75rem .75rem 0; }
+  .tab {
+    display: none;
+    flex: 1;
+    background: transparent;
+    border: 1px solid var(--panel-border);
+    color: var(--text-dim);
+    padding: .5rem;
+    border-radius: 999px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: .75rem;
+    letter-spacing: .05em;
+  }
+  .tab.tab-default { display: inline-flex; align-items: center; justify-content: center; }
+  .tab[aria-selected="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .panes { flex: 1; overflow: hidden; padding: .75rem; }
+  .pane { height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: .5rem; }
+  .pane[hidden] { display: none; }
+
+  .chat-bubble { border-radius: 12px; padding: .5rem .7rem; color: #14141c; }
+  .chat-meta { display: flex; gap: .4rem; align-items: baseline; font-size: .72rem; font-weight: 700; }
+  .chat-time { font-weight: 400; opacity: .65; margin-left: auto; }
+  .chat-text { margin: .15rem 0 0; font-size: .85rem; word-break: break-word; }
+
+  .queue-item, .rank-item {
+    border-radius: 12px;
+    padding: .5rem .7rem;
+    background: rgba(255, 255, 255, .06);
+  }
+  .rank-item { display: flex; justify-content: space-between; gap: .5rem; }
+  .q-name, .rank-name { font-weight: 700; margin-right: .4rem; }
+  .q-karma, .rank-karma { color: var(--accent); font-weight: 700; }
+  .q-text { margin: .2rem 0 0; font-size: .85rem; color: var(--text-dim); }
+
+  #say-form {
+    display: flex;
+    gap: .5rem;
+    padding: .75rem;
+    border-top: 1px solid var(--panel-border);
+  }
+  #say-input {
+    flex: 1;
+    min-width: 0;
+    border-radius: 999px;
+    border: 1px solid var(--panel-border);
+    background: rgba(0, 0, 0, .35);
+    color: var(--text);
+    padding: .55rem .9rem;
+  }
+  #say-btn {
+    border-radius: 999px;
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    padding: .55rem 1.1rem;
+    cursor: pointer;
+  }
+  #say-btn:disabled, #say-input:disabled { opacity: .6; cursor: default; }
+
+  #splash, #name-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, .88);
+    padding: 1.5rem;
+  }
+  #name-modal { z-index: 30; }
+  /* #splash/#name-modal set their own `display: flex`, which as an ID selector
+     outranks the UA `[hidden] { display: none }` rule. Restate it explicitly. */
+  #splash[hidden], #name-modal[hidden] { display: none; }
+  .modal {
+    background: #111;
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    width: min(90vw, 360px);
+    display: flex;
+    flex-direction: column;
+    gap: .75rem;
+  }
+  .modal label { font-size: .8rem; color: var(--text-dim); }
+  .modal input {
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: rgba(255, 255, 255, .06);
+    color: var(--text);
+    padding: .5rem .7rem;
+  }
+  .modal-actions { display: flex; justify-content: flex-end; gap: .5rem; }
+  .modal-actions button { border-radius: 999px; padding: .5rem 1rem; cursor: pointer; }
+  #name-cancel { background: transparent; border: 1px solid var(--panel-border); color: var(--text); }
+  #name-confirm { background: var(--accent); border: none; color: #fff; font-weight: 700; }
+  .field-error { color: var(--accent); font-size: .8rem; margin: 0; }
+
+  .splash-card {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: .9rem;
+    align-items: center;
+    max-width: 480px;
+  }
+  .wordmark {
+    font-family: var(--display-font);
+    font-size: clamp(2.2rem, 8vw, 4rem);
+    color: #fff;
+    text-shadow: 3px 3px 0 var(--accent);
+    letter-spacing: .02em;
+  }
+  .splash-card p { margin: 0; color: var(--text-dim); }
+  #splash-tap {
+    margin-top: .5rem;
+    background: var(--accent);
+    border: none;
+    color: #fff;
+    font-weight: 700;
+    padding: .75rem 1.5rem;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 1rem;
+  }
+
+  #toast-region {
+    position: fixed;
+    left: 50%;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+    transform: translateX(-50%);
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: .4rem;
+    pointer-events: none;
+  }
+  .toast {
+    background: rgba(0, 0, 0, .8);
+    backdrop-filter: blur(14px);
+    border: 1px solid var(--panel-border);
+    padding: .6rem 1.1rem;
+    border-radius: 999px;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity .2s, transform .2s;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  @media (prefers-reduced-motion: reduce) { .toast { transition: opacity .2s; transform: none; } }
+
+  #heart-layer { position: fixed; inset: 0; z-index: 6; pointer-events: none; overflow: hidden; }
+  .heart-burst {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    font-size: 2.2rem;
+    color: var(--accent);
+    animation: heart-pop .6s ease-out forwards;
+  }
+  @keyframes heart-pop {
+    0% { transform: translate(-50%, -50%) scale(.4); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(1.7); opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .heart-burst { animation: heart-fade .6s ease-out forwards; }
+  }
+  @keyframes heart-fade { from { opacity: 1; } to { opacity: 0; } }
+
+  body.chrome-hidden .chrome { display: none; }
+  /* #panel sets its own `display: flex`; an ID selector outranks the class rule
+     above, so restate it here with enough specificity to actually hide it. */
+  body.chrome-hidden #panel, body.chrome-hidden #rail { display: none; }
+</style>
+</head>
+<body>
+
+  <div id="video-wrap">
+    <div id="subscriber-container"></div>
+    <div id="offair-card" class="pill">
+      <p>OFF AIR &mdash; send an idea to wake the channel</p>
+    </div>
+  </div>
+
+  <div id="heart-layer"></div>
+
+  <div class="top-center chrome">
+    <div class="pill live-pill" id="live-pill">
+      <span class="live-dot" aria-hidden="true"></span>
+      <span id="live-label">OFF AIR</span>
+    </div>
+    <div class="pill caption-bar" id="caption-bar" hidden>
+      <span id="caption-text"></span>
+    </div>
+  </div>
+
+  <div class="top-right">
+    <div class="pill chrome" id="viewer-pill"><span id="viewer-count">0 watching</span></div>
+    <button type="button" class="pill pill-btn chrome" id="mute-btn" aria-pressed="false">mute</button>
+    <button type="button" class="pill pill-btn" id="interface-btn" aria-pressed="false">interface</button>
+  </div>
+
+  <aside id="rail" class="chrome" aria-label="Steering and queue">
+    <section>
+      <h2>Steering now</h2>
+      <div id="steering-body"></div>
+    </section>
+    <section>
+      <h2>Queue</h2>
+      <div id="rail-queue"></div>
+    </section>
+  </aside>
+
+  <section id="panel" class="chrome" aria-label="Chat and rank">
+    <div class="tablist" role="tablist" aria-label="Panel views">
+      <button type="button" class="tab tab-default" role="tab" id="tab-chat" aria-controls="pane-chat"
+        aria-selected="true">CHAT</button>
+      <button type="button" class="tab" role="tab" id="tab-queue" aria-controls="pane-queue"
+        aria-selected="false">QUEUE</button>
+      <button type="button" class="tab tab-default" role="tab" id="tab-rank" aria-controls="pane-rank"
+        aria-selected="false">RANK</button>
+    </div>
+    <div class="panes">
+      <div id="pane-chat" class="pane" role="tabpanel" aria-labelledby="tab-chat"></div>
+      <div id="pane-queue" class="pane" role="tabpanel" aria-labelledby="tab-queue" hidden></div>
+      <div id="pane-rank" class="pane" role="tabpanel" aria-labelledby="tab-rank" hidden></div>
+    </div>
+    <form id="say-form">
+      <label for="say-input" class="sr-only" style="position:absolute;left:-9999px;">
+        What should happen next
+      </label>
+      <input id="say-input" type="text" maxlength="280" autocomplete="off"
+        placeholder="What should happen next&hellip;">
+      <button id="say-btn" type="submit">Say</button>
+    </form>
+  </section>
+
+  <div id="splash">
+    <div class="splash-card">
+      <div class="wordmark" id="splash-wordmark"></div>
+      <p>one shared AI channel, live right now</p>
+      <p>type an idea &mdash; the scene on air morphs into it</p>
+      <p>tap the video to like; likes are karma for whoever prompted it</p>
+      <button type="button" id="splash-tap">tap to tune in</button>
+    </div>
+  </div>
+
+  <div id="name-modal" hidden>
+    <form class="modal" id="name-form" role="dialog" aria-modal="true" aria-labelledby="name-modal-title">
+      <h2 id="name-modal-title" style="margin:0;">Pick a name</h2>
+      <label for="name-input">Your name</label>
+      <input id="name-input" type="text" minlength="1" maxlength="24" required autocomplete="off">
+      <p class="field-error" id="name-error" hidden></p>
+      <div class="modal-actions">
+        <button type="button" id="name-cancel">Cancel</button>
+        <button type="submit" id="name-confirm">Join</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="toast-region" aria-live="polite"></div>
+
+  <script src="https://video.standard.vonage.com/v2/js/opentok.min.js"></script>
+  <script type="module">
+    // polsTV viewer page. One shared AI TV channel: type an idea, it steers the scene on air,
+    // tap to like. No framework, no build step — see PLAN.md and docs/CONTRACT.md.
+    const APP_NAME = "polsTV";
+    const POLL_MS = 1000;
+    const MAX_RECONNECT_DELAY_MS = 30_000;
+    const TOAST_MS = 2600;
+    const SAY_RETRY_MSG = "Couldn't reach the channel — try again.";
+
+    document.title = APP_NAME;
+
+    // --- storage: every access wrapped, the page must work with localStorage unavailable ---
+    function safeGet(key) {
+      try { return localStorage.getItem(key); } catch { return null; }
+    }
+    function safeSet(key, value) {
+      try { localStorage.setItem(key, value); } catch { /* ignore, non-critical */ }
+    }
+
+    function randomUrlSafe(len) {
+      const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+      const bytes = new Uint8Array(len);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
+    }
+    function getUid() {
+      let uid = safeGet("ts_uid");
+      if (!uid) {
+        uid = randomUrlSafe(16);
+        safeSet("ts_uid", uid);
+      }
+      return uid;
+    }
+    function getName() { return safeGet("ts_name"); }
+    function setName(name) { safeSet("ts_name", name); }
+
+    function hashHue(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) | 0;
+      return Math.abs(hash) % 360;
+    }
+    function formatTime(ms) {
+      return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+    function h(tag, cls, text) {
+      const el = document.createElement(tag);
+      if (cls) el.className = cls;
+      if (text !== undefined) el.textContent = text;
+      return el;
+    }
+
+    const uid = getUid();
+
+    // --- DOM refs ---
+    const videoWrap = document.getElementById("video-wrap");
+    const subscriberContainer = document.getElementById("subscriber-container");
+    const offairCard = document.getElementById("offair-card");
+    const heartLayer = document.getElementById("heart-layer");
+    const livePill = document.getElementById("live-pill");
+    const liveLabel = document.getElementById("live-label");
+    const captionBar = document.getElementById("caption-bar");
+    const captionText = document.getElementById("caption-text");
+    const viewerCount = document.getElementById("viewer-count");
+    const muteBtn = document.getElementById("mute-btn");
+    const interfaceBtn = document.getElementById("interface-btn");
+    const steeringBody = document.getElementById("steering-body");
+    const railQueue = document.getElementById("rail-queue");
+    const paneQueue = document.getElementById("pane-queue");
+    const paneChat = document.getElementById("pane-chat");
+    const paneRank = document.getElementById("pane-rank");
+    const sayForm = document.getElementById("say-form");
+    const sayInput = document.getElementById("say-input");
+    const sayBtn = document.getElementById("say-btn");
+    const splash = document.getElementById("splash");
+    const splashWordmark = document.getElementById("splash-wordmark");
+    const nameModal = document.getElementById("name-modal");
+    const nameForm = document.getElementById("name-form");
+    const nameInput = document.getElementById("name-input");
+    const nameError = document.getElementById("name-error");
+    const nameCancel = document.getElementById("name-cancel");
+    const toastRegion = document.getElementById("toast-region");
+
+    splashWordmark.textContent = APP_NAME;
+
+    // ---------- splash ----------
+    if (safeGet("ts_splash_seen")) splash.hidden = true;
+    function dismissSplash() {
+      splash.hidden = true;
+      safeSet("ts_splash_seen", "1");
+      wantMuted = false;
+      applyMute();
+      try { OT.unblockAudio(); } catch { /* nothing blocked, or OT not ready yet */ }
+    }
+    splash.addEventListener("click", dismissSplash);
+
+    // ---------- name modal ----------
+    let modalOnConfirm = null;
+    function openNameModal(onConfirm) {
+      modalOnConfirm = onConfirm;
+      nameError.hidden = true;
+      nameInput.value = "";
+      nameModal.hidden = false;
+      nameInput.focus();
+    }
+    function closeNameModal() {
+      nameModal.hidden = true;
+      modalOnConfirm = null;
+    }
+    nameForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const value = nameInput.value.trim();
+      if (value.length < 1 || value.length > 24) {
+        nameError.textContent = "Name must be 1–24 characters.";
+        nameError.hidden = false;
+        return;
+      }
+      setName(value);
+      const confirmCallback = modalOnConfirm;
+      closeNameModal();
+      if (confirmCallback) confirmCallback();
+    });
+    nameCancel.addEventListener("click", closeNameModal);
+
+    // ---------- tabs ----------
+    const tabs = [
+      { btn: document.getElementById("tab-chat"), pane: paneChat },
+      { btn: document.getElementById("tab-queue"), pane: paneQueue },
+      { btn: document.getElementById("tab-rank"), pane: paneRank },
+    ];
+    function selectTab(target) {
+      for (const { btn, pane } of tabs) {
+        const active = btn === target;
+        btn.setAttribute("aria-selected", String(active));
+        btn.tabIndex = active ? 0 : -1;
+        pane.hidden = !active;
+      }
+      target.focus();
+    }
+    for (const [index, { btn }] of tabs.entries()) {
+      btn.tabIndex = index === 0 ? 0 : -1;
+      btn.addEventListener("click", () => selectTab(btn));
+      btn.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        const visible = tabs.filter(({ btn: b }) => b.offsetParent !== null);
+        const at = visible.findIndex(({ btn: b }) => b === btn);
+        const step = event.key === "ArrowRight" ? 1 : -1;
+        const next = visible[(at + step + visible.length) % visible.length];
+        selectTab(next.btn);
+      });
+    }
+
+    // ---------- interface (pure-TV) toggle ----------
+    interfaceBtn.addEventListener("click", () => {
+      const hidden = document.body.classList.toggle("chrome-hidden");
+      interfaceBtn.setAttribute("aria-pressed", String(hidden));
+    });
+
+    // ---------- mute toggle ----------
+    let wantMuted = false;
+    function applyMute() {
+      const video = subscriberContainer.querySelector("video");
+      if (video) video.muted = wantMuted;
+    }
+    muteBtn.addEventListener("click", () => {
+      wantMuted = !wantMuted;
+      applyMute();
+      muteBtn.textContent = wantMuted ? "unmute" : "mute";
+      muteBtn.setAttribute("aria-pressed", String(wantMuted));
+    });
+
+    // ---------- tap-to-like ----------
+    function spawnHeart(x, y) {
+      const heart = h("span", "heart-burst", "❤");
+      heart.style.left = `${x}px`;
+      heart.style.top = `${y}px`;
+      heartLayer.appendChild(heart);
+      heart.addEventListener("animationend", () => heart.remove());
+    }
+    videoWrap.addEventListener("click", async (event) => {
+      let ok = false;
+      try {
+        const res = await fetch("/like", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ uid }),
+        });
+        const data = await res.json().catch(() => null);
+        ok = Boolean(data && data.ok);
+      } catch { /* transient network error: no burst, no toast, matches spec */ }
+      if (ok) spawnHeart(event.clientX, event.clientY);
+    });
+
+    // ---------- posting ideas ----------
+    function showToast(message) {
+      const toast = h("div", "toast", message);
+      toastRegion.appendChild(toast);
+      requestAnimationFrame(() => toast.classList.add("show"));
+      setTimeout(() => {
+        toast.classList.remove("show");
+        toast.addEventListener("transitionend", () => toast.remove(), { once: true });
+      }, TOAST_MS);
+    }
+    function setSaying(saying) {
+      sayInput.disabled = saying;
+      sayBtn.disabled = saying;
+      sayBtn.textContent = saying ? "checking…" : "Say";
+    }
+    async function postJSONSafe(url, body) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => null);
+        return { status: res.status, data };
+      } catch {
+        return { status: 0, data: null };
+      }
+    }
+    async function postIdea(name, text) {
+      setSaying(true);
+      const { status, data } = await postJSONSafe("/say", { uid, name, text, source: "web" });
+      setSaying(false);
+      if (status === 200) {
+        sayInput.value = "";
+        showToast("queued!");
+        return;
+      }
+      if (data && typeof data.reason === "string" && data.reason) {
+        showToast(data.reason);
+        return;
+      }
+      showToast(SAY_RETRY_MSG);
+    }
+    function trySay() {
+      const text = sayInput.value.trim();
+      if (!text) return;
+      const name = getName();
+      if (!name) {
+        openNameModal(() => trySay());
+        return;
+      }
+      postIdea(name, text);
+    }
+    sayForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      trySay();
+    });
+
+    // ---------- diff-render helpers ----------
+    function syncList(container, items, keyFn, renderFn) {
+      const existing = new Map();
+      for (const child of container.children) {
+        if (child.dataset.key !== undefined) existing.set(child.dataset.key, child);
+      }
+      const seen = new Set();
+      for (const item of items) {
+        const key = String(keyFn(item));
+        seen.add(key);
+        const el = renderFn(item, existing.get(key));
+        el.dataset.key = key;
+        container.appendChild(el);
+      }
+      for (const [key, el] of existing) if (!seen.has(key)) el.remove();
+    }
+    function renderQueueItem(item, el) {
+      if (!el) {
+        el = h("div", "queue-item");
+        el.append(h("span", "q-name"), h("span", "q-karma"), h("p", "q-text"));
+      }
+      el.querySelector(".q-name").textContent = item.name;
+      el.querySelector(".q-karma").textContent = `★ ${item.karma}`;
+      el.querySelector(".q-text").textContent = item.text;
+      return el;
+    }
+    function renderChatItem(item, el) {
+      if (!el) {
+        el = h("div", "chat-bubble");
+        const meta = h("div", "chat-meta");
+        meta.append(h("span", "chat-name"), h("span", "chat-karma"), h("span", "chat-time"));
+        el.append(meta, h("p", "chat-text"));
+      }
+      el.style.background = `hsl(${hashHue(item.name)}, 85%, 85%)`;
+      el.querySelector(".chat-name").textContent = item.name;
+      el.querySelector(".chat-karma").textContent = `★${item.karma}`;
+      el.querySelector(".chat-time").textContent = formatTime(item.at);
+      el.querySelector(".chat-text").textContent = item.text;
+      return el;
+    }
+    function renderRankItem(item, el) {
+      if (!el) {
+        el = h("div", "rank-item");
+        el.append(h("span", "rank-name"), h("span", "rank-karma"));
+      }
+      el.querySelector(".rank-name").textContent = item.name;
+      el.querySelector(".rank-karma").textContent = String(item.karma);
+      return el;
+    }
+
+    // ---------- chat scroll pinning ----------
+    let chatScrolledUp = false;
+    paneChat.addEventListener("scroll", () => {
+      const gap = paneChat.scrollHeight - paneChat.scrollTop - paneChat.clientHeight;
+      chatScrolledUp = gap > 24;
+    });
+    function pinChatScroll() {
+      if (!chatScrolledUp) paneChat.scrollTop = paneChat.scrollHeight;
+    }
+
+    // ---------- status rendering ----------
+    let statusLive = false;
+    let hasStream = false;
+    function updateVideoVisibility() {
+      offairCard.hidden = hasStream && statusLive;
+    }
+    function renderLivePill(live) {
+      livePill.classList.toggle("is-live", live);
+      liveLabel.textContent = live ? "LIVE" : "OFF AIR";
+    }
+    function renderCaption(now) {
+      captionBar.hidden = !now;
+      if (now) captionText.textContent = `${now.name}: ${now.text}`;
+    }
+    function renderSteering(steering) {
+      steeringBody.textContent = "";
+      if (!steering) {
+        steeringBody.appendChild(h("p", "steer-hint", "Nothing steering yet."));
+        return;
+      }
+      steeringBody.appendChild(h("p", "q-name", steering.name));
+      steeringBody.appendChild(h("p", "q-text", steering.text));
+      steeringBody.appendChild(h("p", "steer-hint", "~20 s to screen"));
+    }
+    function renderStatus(status) {
+      statusLive = Boolean(status.live);
+      updateVideoVisibility();
+      renderLivePill(statusLive);
+      renderCaption(status.now);
+      viewerCount.textContent = `${status.viewers} watching`;
+      renderSteering(status.steering);
+      syncList(railQueue, status.queue, (q) => q.id, renderQueueItem);
+      syncList(paneQueue, status.queue, (q) => q.id, renderQueueItem);
+      syncList(paneChat, status.chat, (c) => c.id, renderChatItem);
+      pinChatScroll();
+      syncList(paneRank, status.rank, (r) => r.name, renderRankItem);
+    }
+
+    // ---------- polling, paused while the tab is hidden ----------
+    let statusTimer = null;
+    async function pollOnce() {
+      try {
+        const res = await fetch(`/status?uid=${encodeURIComponent(uid)}`);
+        if (!res.ok) return;
+        renderStatus(await res.json());
+      } catch { /* transient network hiccup, next tick retries */ }
+    }
+    function startPolling() {
+      if (statusTimer) return;
+      pollOnce();
+      statusTimer = setInterval(pollOnce, POLL_MS);
+    }
+    function stopPolling() {
+      if (!statusTimer) return;
+      clearInterval(statusTimer);
+      statusTimer = null;
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) stopPolling();
+      else startPolling();
+    });
+    if (!document.hidden) startPolling();
+
+    // ---------- Vonage subscribe-only session, with backoff reconnect ----------
+    let reconnectDelay = 1000;
+    function scheduleReconnect() {
+      hasStream = false;
+      updateVideoVisibility();
+      setTimeout(connectViewer, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
+    }
+    function onStreamCreated(session, event) {
+      session.subscribe(
+        event.stream,
+        "subscriber-container",
+        {
+          insertMode: "replace",
+          width: "100%",
+          height: "100%",
+          fitMode: "cover",
+          subscribeToAudio: true,
+          style: { audioBlockedDisplayMode: "off", buttonDisplayMode: "off", nameDisplayMode: "off" },
+        },
+        (err) => { if (err) console.error("subscribe failed:", err); },
+      );
+      hasStream = true;
+      updateVideoVisibility();
+      applyMute();
+    }
+    async function connectViewer() {
+      let creds;
+      try {
+        const res = await fetch("/viewer-token");
+        if (!res.ok) throw new Error(`viewer-token ${res.status}`);
+        creds = await res.json();
+      } catch {
+        scheduleReconnect();
+        return;
+      }
+      const session = OT.initSession(creds.applicationId, creds.sessionId);
+      session.on("streamCreated", (event) => onStreamCreated(session, event));
+      session.on("streamDestroyed", () => {
+        hasStream = false;
+        updateVideoVisibility();
+      });
+      session.on("sessionDisconnected", scheduleReconnect);
+      session.connect(creds.token, (err) => {
+        if (err) scheduleReconnect();
+        else reconnectDelay = 1000;
+      });
+    }
+    connectViewer();
+  </script>
+</body>
+</html>
