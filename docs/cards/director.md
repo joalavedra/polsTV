@@ -185,7 +185,7 @@ All MEASURED on our key, in headless Chrome 145 driven by a script. Supersedes t
   playback and took 4.9–7.7 s to generate; the server keeps ~2 chunks buffered.
 - **Steer latency:** `prompt` → `prompt_pending` 0.1 s → `prompt_applied` 8.0 s → first chunk carrying
   the new version 12.8 s → **visible on screen ~17–20 s after the send.** Plan the steering cadence
-  around one idea per ~25 s, and fill the gap with the announcer ("up next, from Timba…").
+  around one idea per ~10 s, and fill the gap with the announcer ("up next, from Timba…").
 - **Continuity is real:** same subject and props carried across the steer (capybara + rubber duck
   walked from the kitchen through a door into the arcade). See `spike/frames/contact.jpg`.
 - Output is 1344×768 with a live audio track.
