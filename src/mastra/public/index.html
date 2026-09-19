@@ -45,6 +45,10 @@
     /* Height of the pinned input bar. Kept as one number so the sheet, rail and caption block
        all clear it consistently instead of guessing at three different pixel counts. */
     --inputbar-h: 64px;
+    /* ticker:start — layout contract: 0 by default, set on body.has-ticker below. Includes the
+       bottom safe-area inset, so anything clearing the bar just needs bottom: var(--ticker-h). */
+    --ticker-h: 0px;
+    /* ticker:end */
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
@@ -457,7 +461,8 @@
     position: fixed;
     left: 0;
     right: 0;
-    bottom: var(--inputbar-h);
+    /* ticker: cleared above the crawl bar too — --ticker-h is 0 when it's not showing. */
+    bottom: calc(var(--inputbar-h) + var(--ticker-h));
     height: 70dvh;
     z-index: 12;
     background: var(--panel-bg);
@@ -470,7 +475,7 @@
     overflow: hidden;
     /* The sheet is anchored above the input bar, so 100% alone left its tab row peeking out from
        behind the translucent bar. Push it the bar's height further. */
-    transform: translateY(calc(100% + var(--inputbar-h)));
+    transform: translateY(calc(100% + var(--inputbar-h) + var(--ticker-h)));
     transition: transform .25s ease;
   }
   body.sheet-open #panel { transform: translateY(0); }
@@ -520,7 +525,7 @@
     position: fixed;
     left: 0;
     right: 0;
-    bottom: 0;
+    bottom: var(--ticker-h); /* ticker: clears the crawl bar when it's showing */
     z-index: 15;
     background: #111;
     border: 1px solid var(--panel-border);
@@ -626,7 +631,7 @@
     #panel {
       right: 0;
       left: auto;
-      bottom: 0;
+      bottom: var(--ticker-h); /* ticker: clears the crawl bar when it's showing */
       top: 0;
       height: auto;
       width: min(86vw, 340px);
@@ -705,7 +710,7 @@
     position: fixed;
     left: 0;
     right: 0;
-    bottom: 0;
+    bottom: var(--ticker-h); /* ticker: clears the crawl bar when it's showing */
     z-index: 13;
     display: flex;
     flex-wrap: wrap;
@@ -834,6 +839,69 @@
   }
   .toast.show { opacity: 1; transform: translateY(0); }
   @media (prefers-reduced-motion: reduce) { .toast { transition: opacity .2s; transform: none; } }
+
+  /* ticker:start — bottom crawl of shared Telegram photos, outside the video (the broadcast
+     picture itself no longer draws it). Self-contained, safe to drop in a conflict. Sets
+     body.has-ticker + --ticker-h (declared on :root above) as the layout contract other
+     bottom-anchored chrome reads to clear it. */
+  body.has-ticker { --ticker-h: calc(56px + env(safe-area-inset-bottom, 0px)); }
+  @media (max-width: 820px) {
+    body.has-ticker { --ticker-h: calc(44px + env(safe-area-inset-bottom, 0px)); }
+  }
+  #ticker-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 17;
+    height: var(--ticker-h);
+    /* Content height = --ticker-h minus the safe-area padding below, via border-box. */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    overflow: hidden;
+    background: rgba(8, 8, 12, .88);
+    border-top: 1px solid var(--panel-border);
+  }
+  #ticker-track {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    width: max-content;
+    animation: ticker-scroll linear infinite;
+  }
+  @keyframes ticker-scroll {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* Stays at translateX(0): overflow:hidden on #ticker-bar crops it to the first items,
+       shown statically instead of scrolling. */
+    #ticker-track { animation: none; }
+  }
+  .ticker-item {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    padding: 0 1.1rem;
+    flex: none;
+    white-space: nowrap;
+    color: var(--text);
+    font-size: .82rem;
+  }
+  .ticker-thumb {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    object-fit: cover;
+    flex: none;
+    background: rgba(255, 255, 255, .08);
+  }
+  .ticker-name { font-weight: 700; }
+  .ticker-caption { font-weight: 400; color: var(--text-dim); }
+  @media (max-width: 820px) {
+    .ticker-item { font-size: .76rem; padding: 0 .8rem; gap: .4rem; }
+    .ticker-thumb { width: 28px; height: 28px; border-radius: 6px; }
+  }
+  /* ticker:end */
 
   /* pitch:start — karma-gated sponsored voice-over. Self-contained, safe to drop in a conflict.
      #pitch-btn's own look now comes from .rail-item/.rail-icon (action-rail, above) and
@@ -1404,6 +1472,14 @@
 
   <div id="toast-region" aria-live="polite"></div>
 
+  <!-- ticker:start — bottom crawl of shared Telegram photos, outside the video. class="chrome"
+       hides it with the rest of the chrome in pure-TV mode and in landscape-phone mode.
+       Items are built by JS (ticker:start/end further down); empty means hidden, no space. -->
+  <div id="ticker-bar" class="chrome" hidden aria-hidden="true">
+    <div id="ticker-track"></div>
+  </div>
+  <!-- ticker:end -->
+
   <script src="https://video.standard.vonage.com/v2/js/opentok.min.js"></script>
   <script type="module">
     // polsTV viewer page. One shared AI TV channel: type an idea, it steers the scene on air,
@@ -1526,6 +1602,8 @@
     const nameError = document.getElementById("name-error");
     const nameCancel = document.getElementById("name-cancel");
     const toastRegion = document.getElementById("toast-region");
+    const tickerBar = document.getElementById("ticker-bar"); // ticker
+    const tickerTrack = document.getElementById("ticker-track"); // ticker
 
     splashWordmark.textContent = APP_NAME;
 
@@ -1818,6 +1896,62 @@
       if (spendPopover.contains(event.target) || spendPill.contains(event.target)) return;
       closeSpendPopover({ returnFocus: false });
     });
+
+    // ticker:start — bottom crawl of shared Telegram photos. Polls GET ticker every 5s but only
+    // rebuilds the DOM when the set of item ids actually changes, so an unchanged ticker never
+    // restarts its CSS scroll animation.
+    const TICKER_POLL_MS = 5000;
+    const TICKER_PX_PER_SEC = 60;
+    let lastTickerIds = null;
+
+    function buildTickerItem(item) {
+      const el = h("div", "ticker-item");
+      const img = document.createElement("img");
+      img.className = "ticker-thumb";
+      img.alt = "";
+      img.src = item.url; // page-relative: resolves under a path prefix (site.com/polstv/) too
+      el.append(img, h("span", "ticker-name", item.name));
+      if (item.caption) el.appendChild(h("span", "ticker-caption", item.caption));
+      return el;
+    }
+
+    function renderTicker(items) {
+      document.body.classList.toggle("has-ticker", items.length > 0);
+      tickerBar.hidden = items.length === 0;
+      tickerTrack.textContent = "";
+      if (items.length === 0) return;
+      // Duplicated once so the loop never shows a gap: the keyframes translate exactly one
+      // copy's width (-50% of this doubled track), so the second copy lands where the first
+      // started the instant it scrolls off.
+      for (let copy = 0; copy < 2; copy += 1) {
+        for (const item of items) tickerTrack.appendChild(buildTickerItem(item));
+      }
+      const oneCopyWidth = tickerTrack.scrollWidth / 2;
+      tickerTrack.style.animationDuration = `${Math.max(oneCopyWidth / TICKER_PX_PER_SEC, 1)}s`;
+    }
+
+    async function fetchTicker() {
+      try {
+        const res = await fetch("ticker");
+        if (!res.ok) return;
+        const { items } = await res.json();
+        const ids = items.map((item) => item.id).join(",");
+        if (ids === lastTickerIds) return;
+        lastTickerIds = ids;
+        renderTicker(items);
+      } catch { /* transient network hiccup, next tick retries */ }
+    }
+    let tickerTimer = null;
+    function startTickerPolling() {
+      if (tickerTimer) return;
+      fetchTicker();
+      tickerTimer = setInterval(fetchTicker, TICKER_POLL_MS);
+    }
+    function stopTickerPolling() {
+      clearInterval(tickerTimer);
+      tickerTimer = null;
+    }
+    // ticker:end
 
     // ---------- likes: tap-the-video, and the discoverable like button ----------
     // lastNow mirrors status.now between polls so click handlers know the current scene
@@ -2507,14 +2641,17 @@
       if (document.hidden) {
         stopPolling();
         stopSpendPolling();
+        stopTickerPolling(); // ticker
       } else {
         startPolling();
         startSpendPolling();
+        startTickerPolling(); // ticker
       }
     });
     if (!document.hidden) {
       startPolling();
       startSpendPolling();
+      startTickerPolling(); // ticker
     }
 
     // ---------- ambient backdrop: same MediaStream as the subscriber's <video>, heavily

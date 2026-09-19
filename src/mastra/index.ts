@@ -346,8 +346,9 @@ export const mastra = new Mastra({
         handler: async (c) => c.json(spend.snapshot()),
       }),
 
-      // Public, read-only: the ticker bar broadcaster.html draws. Images arrive over Telegram
-      // (telegram.ts's onDirectMessage); these just serve what's currently on it.
+      // Public, read-only: the ticker bar public/index.html draws at the bottom of the page.
+      // Images arrive over Telegram (telegram.ts's onDirectMessage); these just serve what's
+      // currently on it.
       registerApiRoute("/ticker", {
         method: "GET",
         requiresAuth: false,
