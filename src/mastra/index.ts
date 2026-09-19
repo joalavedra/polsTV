@@ -10,8 +10,10 @@ import { z } from "zod";
 import { clip, synthesise } from "./announcer";
 import type { Idea } from "./channel";
 import { channel } from "./channel";
+import { livePitchDeps, PITCH_MIN_KARMA, pitchSlot, submitPitch } from "./pitch";
 import {
   MAX_IDEA_CHARS,
+  MAX_PITCH_BRIEF_CHARS,
   moderate,
   moderator,
   narrator,
@@ -23,7 +25,7 @@ import {
 } from "./showrunner";
 import type { TokenUsage } from "./spend";
 import { spend } from "./spend";
-import { notifySceneChange, showrunner } from "./telegram";
+import { notifyPitchDropped, notifySceneChange, showrunner } from "./telegram";
 import { videoAccess } from "./vonage";
 
 const broadcasterSecret = process.env["BROADCASTER_SECRET"];
@@ -84,11 +86,46 @@ const sayBody = z.object({
   source: z.enum(["web", "voice"]).default("web"),
 });
 const likeBody = z.object({ uid });
+const pitchBody = z.object({
+  uid,
+  name: z.string().trim().min(1).max(24),
+  brief: z.string().trim().min(1).max(MAX_PITCH_BRIEF_CHARS),
+});
 const steerResultBody = z.object({
   steerId: z.number().int(),
   applied: z.boolean(),
   reason: z.string().max(200).optional(),
 });
+const pitchResultBody = z.object({
+  pitchId: z.number().int(),
+  played: z.boolean(),
+  reason: z.string().max(200).optional(),
+});
+
+// Which HTTP status each refusal from pitch.ts is worth. Everything else is a 200.
+const pitchStatus = {
+  karma: 403,
+  cooldown: 429,
+  busy: 409,
+  rejected: 422,
+  unavailable: 503,
+} as const;
+
+/** Drop pitches the broadcaster never collected and tell whoever submitted them. */
+function sweepPitches(): void {
+  pitchSlot.sweep();
+  for (let dropped = pitchSlot.takeDropped(); dropped; dropped = pitchSlot.takeDropped()) {
+    console.warn(`pitch ${dropped.id} from ${dropped.uid} was never played, dropped`);
+    void notifyPitchDropped(dropped.uid);
+  }
+}
+
+/** The pitch waiting for the air, handed to the broadcaster exactly once. */
+function pitchForBroadcaster(): { pitch: { pitchId: number; name: string; url: string } } | undefined {
+  const pitch = pitchSlot.take();
+  if (!pitch?.url) return undefined;
+  return { pitch: { pitchId: pitch.id, name: pitch.name, url: pitch.url } };
+}
 
 function isBroadcaster(secret: string): boolean {
   const given = Buffer.from(secret);
@@ -136,15 +173,15 @@ async function asset(file: string): Promise<Buffer | undefined> {
   return undefined;
 }
 
-// Moderation is a paid LLM call, so one idea per client every few seconds is plenty.
-const SAY_MIN_GAP_MS = 3_000;
-const lastSayAt = new Map<string, number>();
+// Moderation is a paid LLM call, so one idea or pitch per client every few seconds is plenty.
+const POST_MIN_GAP_MS = 3_000;
+const lastPostAt = new Map<string, number>();
 
-function sayTooSoon(client: string): boolean {
+function postTooSoon(client: string): boolean {
   const now = Date.now();
-  if (now - (lastSayAt.get(client) ?? 0) < SAY_MIN_GAP_MS) return true;
-  lastSayAt.set(client, now);
-  if (lastSayAt.size > 5_000) lastSayAt.clear();
+  if (now - (lastPostAt.get(client) ?? 0) < POST_MIN_GAP_MS) return true;
+  lastPostAt.set(client, now);
+  if (lastPostAt.size > 5_000) lastPostAt.clear();
   return false;
 }
 
@@ -203,7 +240,25 @@ export const mastra = new Mastra({
         handler: async (c) => {
           const viewer = uid.safeParse(c.req.query("uid"));
           if (viewer.success) channel.sawViewer(viewer.data);
-          return c.json(channel.status());
+          sweepPitches();
+          return c.json({ ...channel.status(), pitch: pitchSlot.status() ?? null });
+        },
+      }),
+
+      // Per-viewer state the whole channel does not need: /status is polled every second by
+      // everyone watching, this only when the pitch button needs to know where a viewer stands.
+      registerApiRoute("/me", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => {
+          const viewer = uid.safeParse(c.req.query("uid"));
+          if (!viewer.success) return c.json({ ok: false, reason: "Invalid uid." }, 400);
+          const karma = channel.karmaOf(viewer.data);
+          return c.json({
+            karma,
+            pitchUnlocked: karma >= PITCH_MIN_KARMA,
+            pitchCooldownSeconds: pitchSlot.cooldownSeconds(viewer.data),
+          });
         },
       }),
 
@@ -223,7 +278,7 @@ export const mastra = new Mastra({
           if (!body.success) return c.json({ ok: false, reason: "Invalid message." }, 400);
           // Only proxied (public) traffic is limited; localhost has no forwarding header.
           const client = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for");
-          if (client && sayTooSoon(client)) {
+          if (client && postTooSoon(client)) {
             return c.json({ ok: false, reason: "Slow down a little." }, 429);
           }
           let verdict, usage;
@@ -244,6 +299,23 @@ export const mastra = new Mastra({
           }
           spend.recordModeration(added.idea.id, added.idea.name, added.idea.text, usage);
           return c.json({ ok: true, id: added.idea.id });
+        },
+      }),
+
+      registerApiRoute("/pitch", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          const body = pitchBody.safeParse(await c.req.json().catch(() => null));
+          if (!body.success) return c.json({ ok: false, reason: "Invalid pitch." }, 400);
+          // Only proxied (public) traffic is limited; localhost has no forwarding header.
+          const client = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for");
+          if (client && postTooSoon(client)) {
+            return c.json({ ok: false, reason: "Slow down a little." }, 429);
+          }
+          const result = await submitPitch(pitchSlot, livePitchDeps, body.data);
+          if (!result.ok) return c.json(result, pitchStatus[result.code]);
+          return c.json(result);
         },
       }),
 
@@ -281,10 +353,16 @@ export const mastra = new Mastra({
           // ?director=1 while a Director session is open (broadcaster.html); this poll is also the
           // broadcaster's heartbeat, so bill it every time regardless of what it returns below.
           accrueHeartbeat(c.req.query("director") === "1");
+          sweepPitches();
+          // Rides along with whatever this poll was going to answer, including a 204 with nothing
+          // else in it. The broadcaster queues it behind any clip already playing.
+          const pitch = pitchForBroadcaster();
           const pending = channel.pendingSteer();
-          if (pending) return c.json(pending);
+          if (pending) return c.json({ ...pending, ...pitch });
           const idea = channel.nextIdea();
-          if (!idea || !channel.canSteer() || writingSteer) return c.body(null, 204);
+          if (!idea || !channel.canSteer() || writingSteer) {
+            return pitch ? c.json(pitch) : c.body(null, 204);
+          }
           writingSteer = true;
           try {
             const [steerWrite, voice] = await Promise.all([
@@ -296,7 +374,8 @@ export const mastra = new Mastra({
             if (voice.clipId) {
               spend.recordTts(idea.id, idea.name, idea.text, clip(voice.clipId)?.length ?? 0);
             }
-            return c.json(channel.beginSteer(idea.id, steerWrite.prompt, voice.url));
+            const steer = channel.beginSteer(idea.id, steerWrite.prompt, voice.url);
+            return c.json({ ...steer, ...pitch });
           } finally {
             writingSteer = false;
           }
@@ -331,6 +410,19 @@ export const mastra = new Mastra({
           }
           void notifySceneChange({ onAir, ended });
           return c.json({ ok: true, onAir: onAir?.ideaId ?? null });
+        },
+      }),
+
+      registerApiRoute("/b/:secret/pitch-result", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          if (!isBroadcaster(c.req.param("secret"))) return c.notFound();
+          const body = pitchResultBody.safeParse(await c.req.json().catch(() => null));
+          if (!body.success) return c.json({ ok: false }, 400);
+          if (!body.data.played) console.warn("pitch clip did not play:", body.data.reason);
+          pitchSlot.release(body.data.pitchId);
+          return c.json({ ok: true });
         },
       }),
 

@@ -118,7 +118,7 @@
     opens: [], // timestamps of session opens, for the 3-per-10-min guard
     ident: { lastPrompt: undefined },
     idle: { queueEmptySince: null },
-    announcer: { played: new Set() }, // steerIds whose clip we've already played
+    clips: { played: new Set(), queue: [], draining: false }, // spoken clips, strictly one at a time
     render: { identTimer: undefined },
     audio: { ctx: undefined, destination: undefined, directorGain: undefined },
     videoTrack: undefined,
@@ -283,7 +283,7 @@
     }, 500);
   }
 
-  // ---- announcer: TTS clip mixed into the same published audio destination ----------------
+  // ---- spoken clips: TTS mixed into the same published audio destination, one at a time -----
 
   function duckDirectorGain(target) {
     const gain = state.audio.directorGain.gain;
@@ -292,24 +292,76 @@
     gain.linearRampToValueAtTime(target, now + 0.2);
   }
 
-  /** Fetch, decode and play one steer's announcer clip. Never fatal: logs and skips on failure. */
-  async function playAnnouncer(url, steerId) {
-    if (!url || state.announcer.played.has(steerId)) return;
-    state.announcer.played.add(steerId);
+  /**
+   * Fetch, decode and play one clip, resolving when it has finished. Never fatal: returns the
+   * failure message instead of throwing, so the queue keeps moving and a pitch can be reported.
+   */
+  async function playClip(item) {
     try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`${url} -> ${res.status}`);
+      const res = await fetch(item.url);
+      if (!res.ok) throw new Error(`${item.url} -> ${res.status}`);
       const bytes = await res.arrayBuffer();
       const buffer = await state.audio.ctx.decodeAudioData(bytes);
       const source = state.audio.ctx.createBufferSource();
       source.buffer = buffer;
       source.connect(state.audio.destination);
+      const ended = new Promise((resolve) => {
+        source.onended = resolve;
+      });
       duckDirectorGain(0.3);
-      source.onended = () => duckDirectorGain(1.0);
+      log("clip_playing", { key: item.key, seconds: Math.round(buffer.duration * 10) / 10 });
       source.start();
-      log("announcer_playing", { steerId });
+      await ended;
+      duckDirectorGain(1.0);
+      log("clip_ended", { key: item.key });
+      return undefined;
     } catch (e) {
-      log("announcer_failed", { steerId, message: String(e) });
+      duckDirectorGain(1.0);
+      log("clip_failed", { key: item.key, message: String(e) });
+      return String(e);
+    }
+  }
+
+  /**
+   * Strictly one clip at a time: a sponsored pitch must never talk over the narrator line for a
+   * steer, and two clips into the same destination would just be noise.
+   */
+  async function drainClips() {
+    if (state.clips.draining) return;
+    state.clips.draining = true;
+    try {
+      for (let item = state.clips.queue.shift(); item; item = state.clips.queue.shift()) {
+        const failure = await playClip(item);
+        if (item.kind === "pitch") await reportPitchResult(item.id, failure);
+      }
+    } finally {
+      state.clips.draining = false;
+    }
+  }
+
+  /** Queue one clip for the voice. Ignores a clip already queued, so a repeated poll is harmless. */
+  function enqueueClip(kind, id, url) {
+    const key = `${kind}-${id}`;
+    if (!url || state.clips.played.has(key)) return;
+    state.clips.played.add(key);
+    state.clips.queue.push({ kind, id, url, key });
+    drainClips();
+  }
+
+  /** Tell the server the pitch had its turn, so the next viewer can claim the slot. */
+  async function reportPitchResult(pitchId, failure) {
+    try {
+      await fetch(`b/${state.secret}/pitch-result`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pitchId,
+          played: failure === undefined,
+          ...(failure ? { reason: failure.slice(0, 200) } : {}),
+        }),
+      });
+    } catch (e) {
+      log("pitch_result_failed", { pitchId, message: String(e) });
     }
   }
 
@@ -664,11 +716,15 @@
     if (res.status === 204) return;
     if (!res.ok) return log("next_steer_error", { status: res.status });
     const steer = await res.json();
+    // A waiting pitch rides along with whatever this poll returned, including a body with nothing
+    // else in it. Handled before the steer dedup below: the server hands each pitch out once.
+    if (steer.pitch) enqueueClip("pitch", steer.pitch.pitchId, steer.pitch.url);
+    if (steer.steerId === undefined) return; // pitch-only poll
     if (steer.steerId === state.lastSeenSteerId) return; // idempotent: already acted on it
     state.lastSeenSteerId = steer.steerId;
     state.steerSentAt.set(steer.steerId, Date.now());
     state.idle.queueEmptySince = null;
-    playAnnouncer(steer.announcerUrl, steer.steerId); // fires whether Director is on or off
+    enqueueClip("announcer", steer.steerId, steer.announcerUrl); // whether Director is on or off
     if (state.directorOff) return resolveIdentSteer(steer);
     if (state.director.session) return sendSteer(steer.prompt, steer.steerId);
     return openDirectorSession(steer.prompt, steer.steerId);
