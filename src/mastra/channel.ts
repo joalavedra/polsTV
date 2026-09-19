@@ -79,6 +79,13 @@ export interface SteerOutcome {
 
 /** Measured steer-to-screen latency is 17-20 s; steering faster than this just stacks prompts. */
 export const STEER_GAP_MS = 25_000;
+/**
+ * How long a steer may stay in flight before the channel gives up on it. The broadcaster
+ * resolves one within seconds; one still open after this lost its result — the page reloaded,
+ * its POST fell into a server restart, or Director never answered. Without this the channel
+ * holds that steer forever and nothing else ever airs.
+ */
+export const STEER_TIMEOUT_MS = 90_000;
 /** More than this and the scene stops resembling what the original prompter asked for. */
 export const MAX_AMENDS_PER_SCENE = 3;
 const VIEWER_TTL_MS = 10_000;
@@ -87,7 +94,12 @@ const CHAT_KEEP = 50;
 const RANK_KEEP = 10;
 
 export class Channel {
-  private nextId = 1;
+  /**
+   * Seeded from the clock, not 1. The broadcaster page outlives the server across a hot reload
+   * or a crash-loop; it dedups steers by id and keys its played-clip set on them, so an id
+   * reused after a restart is silently ignored and the queue wedges behind it for good.
+   */
+  private nextId: number;
   private queue: Idea[] = [];
   private pending: Steer | undefined;
   private lastSteerAt = 0;
@@ -98,7 +110,9 @@ export class Channel {
   private viewers = new Map<string, number>();
   private broadcasterSeenAt = 0;
 
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(private readonly now: () => number = Date.now) {
+    this.nextId = this.now();
+  }
 
   /**
    * Queue an already-moderated idea or amend. One queued contribution per user, of either kind,
@@ -198,6 +212,19 @@ export class Channel {
 
   pendingSteer(): Steer | undefined {
     return this.pending;
+  }
+
+  /**
+   * Give up on an in-flight steer the broadcaster never reported on, so the queue moves again.
+   * Its idea is dropped with it — nobody knows whether it reached the screen. Returns the
+   * abandoned steer exactly once, so the caller can log it and file its cost.
+   */
+  expireStaleSteer(): Steer | undefined {
+    const steer = this.pending;
+    if (!steer || this.now() - this.lastSteerAt < STEER_TIMEOUT_MS) return undefined;
+    this.pending = undefined;
+    this.queue = this.queue.filter((idea) => idea.id !== steer.ideaId);
+    return steer;
   }
 
   beginSteer(ideaId: number, prompt: string, announcerUrl?: string): Steer {

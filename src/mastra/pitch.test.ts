@@ -19,6 +19,18 @@ function setup(karma = PITCH_MIN_KARMA) {
   return { slot, tick, reserve };
 }
 
+/** The ids one boot's slot hands out over three pitches. */
+function pitchIds(slot: PitchSlot): number[] {
+  const ids: number[] = [];
+  for (const uid of ["ana", "bob", "carol"]) {
+    const reserved = slot.reserve({ uid, name: uid, brief: "lemonade", karma: PITCH_MIN_KARMA });
+    if (!reserved.ok) throw new Error(reserved.reason);
+    ids.push(reserved.pitch.id);
+    slot.release(reserved.pitch.id);
+  }
+  return ids;
+}
+
 /** Reserve, synthesise and hand a pitch to the broadcaster, as submitPitch would. */
 function airborne(ctx: ReturnType<typeof setup>, uid = "ana") {
   const reserved = ctx.reserve(uid);
@@ -66,8 +78,7 @@ describe("cooldown", () => {
 
   it("is per viewer, not channel-wide", () => {
     const ctx = setup();
-    airborne(ctx, "ana");
-    ctx.slot.release(1);
+    ctx.slot.release(airborne(ctx, "ana").id);
     expect(ctx.slot.cooldownSeconds("bob")).toBe(0);
     expect(ctx.reserve("bob", "Bob").ok).toBe(true);
   });
@@ -108,8 +119,8 @@ describe("one pitch at a time", () => {
 
   it("hands a pitch to the broadcaster exactly once", () => {
     const ctx = setup();
-    airborne(ctx);
-    expect(ctx.slot.take()?.url).toBe("announcer/pitch-1");
+    const pitch = airborne(ctx);
+    expect(ctx.slot.take()?.url).toBe(`announcer/pitch-${pitch.id}`);
     expect(ctx.slot.take()).toBeUndefined();
   });
 
@@ -118,6 +129,14 @@ describe("one pitch at a time", () => {
     ctx.reserve();
     expect(ctx.slot.take()).toBeUndefined();
     expect(ctx.slot.status()).toBeUndefined();
+  });
+
+  it("gives every boot its own pitch ids so a restarted server never reuses one", () => {
+    // The broadcaster page outlives a server restart and skips any clip id it has already
+    // played, so a reused pitch id means that viewer's ad read silently never airs.
+    const firstIds = pitchIds(new PitchSlot(() => 1_000_000));
+    const secondIds = pitchIds(new PitchSlot(() => 1_000_500)); // a restart half a second later
+    expect(firstIds.filter((id) => secondIds.includes(id))).toEqual([]);
   });
 
   it("ignores results and readiness for a pitch that is not the current one", () => {
@@ -225,7 +244,8 @@ describe("submitPitch", () => {
     const slot = new PitchSlot();
     const result = await submitPitch(slot, deps(), input);
     expect(result).toEqual({ ok: true, line: "A word from Ana. Lemonade, probably." });
-    expect(slot.take()?.url).toBe("announcer/pitch-1");
+    const taken = slot.take();
+    expect(taken?.url).toBe(`announcer/pitch-${taken?.id}`);
   });
 
   it("meters both Nebius calls and the clip on the pitches line", async () => {

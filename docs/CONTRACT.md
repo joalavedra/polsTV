@@ -104,7 +104,13 @@ field is `null` the rest of the time, including while the ad read is still being
 | `ALL /b/:secret/fal-proxy` | fal client `proxyUrl`. Holds `FAL_KEY` server-side. |
 | `POST /b/:secret/eval` | body `{ name, text }` → `200 { ok: true, reason: "", prompt }` when accepted, `200 { ok: false, reason }` when moderation refuses, `503 { ok: false, reason }` when the moderator or scene writer fails · `400` invalid. Runs `moderate(text, name)` and, when accepted, `writeSteer(undefined, text)` exactly as `/say` would, with no side effects: nothing is queued, nothing airs, no TTS runs. The evaluation hook for external red-teaming (Galtea); see `src/mastra/eval.ts`. |
 
-`steerId` is the server's id. Director's `prompt_version` is the broadcaster's own counter, strictly
-increasing per Director session, starting at 1 with `configure`.
+`steerId` is the server's id. It is seeded from the clock at boot, not from 1, so a restarted
+server never hands out an id the broadcaster page has already acted on and dropped as a duplicate
+(`channel.ts`). The same holds for `ideaId` and `pitchId`. A steer nobody reports on within 90 s
+(`STEER_TIMEOUT_MS`) is abandoned with an operator log line and its idea dropped, so a lost
+`steer-result` cannot wedge the queue for the rest of the broadcast.
+
+Director's `prompt_version` is the broadcaster's own counter, strictly increasing per Director
+session, starting at 1 with `configure`.
 
 Opening prompt for a new Director session: `status.now?.prompt`, or a channel-ident prompt when null.

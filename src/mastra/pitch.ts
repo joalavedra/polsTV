@@ -57,11 +57,16 @@ type Reservation = { ok: true; pitch: Pitch } | { ok: false; code: PitchRefusal;
 
 export class PitchSlot {
   private current: Pitch | undefined;
-  private nextId = 1;
+  /** Seeded from the clock for the same reason as Channel's: the broadcaster keys its
+   * played-clip set on pitch ids and outlives the server, so an id reused after a restart makes
+   * that pitch silently never play. */
+  private nextId: number;
   private reservedAt = new Map<string, number>();
   private dropped: Pitch[] = [];
 
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(private readonly now: () => number = Date.now) {
+    this.nextId = this.now();
+  }
 
   /** Whole seconds until this user may pitch again; 0 when they may pitch now. */
   cooldownSeconds(uid: string): number {

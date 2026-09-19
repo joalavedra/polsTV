@@ -128,6 +128,21 @@ const pitchStatus = {
   unavailable: 503,
 } as const;
 
+/**
+ * Let go of a steer the broadcaster never reported on. Its `steer-result` POST was lost — the
+ * page reloaded, the server restarted under it, Director went quiet — and without this the
+ * channel sits on that one steer and no idea ever airs again.
+ */
+function expireStaleSteer(): void {
+  const abandoned = channel.expireStaleSteer();
+  if (!abandoned) return;
+  console.warn(
+    `steer ${abandoned.steerId} (idea ${abandoned.ideaId}) was never reported on; dropping it ` +
+      `so the queue can move. The broadcaster page may have reloaded or lost the server.`,
+  );
+  spend.markNotAired(abandoned.ideaId);
+}
+
 /** Drop pitches the broadcaster never collected and tell whoever submitted them. */
 function sweepPitches(): void {
   pitchSlot.sweep();
@@ -500,6 +515,7 @@ export const mastra = new Mastra({
           // ?director=1 while a Director session is open (broadcaster.html); this poll is also the
           // broadcaster's heartbeat, so bill it every time regardless of what it returns below.
           accrueHeartbeat(c.req.query("director") === "1");
+          expireStaleSteer();
           sweepPitches();
           // Rides along with whatever this poll was going to answer, including a 204 with nothing
           // else in it. The broadcaster queues it behind any clip already playing.
