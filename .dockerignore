@@ -1,0 +1,19 @@
+# Generated / local-only — never needed in the build context.
+node_modules
+.git
+.mastra
+dist
+mastra.db*
+
+# Secrets — never baked into the image; real values come from env at runtime.
+.env
+.env.*
+*.pem
+*.key
+
+# Hackathon research and scratch, irrelevant to the running app.
+hackathon-report.md
+slop-report.md
+spike
+.gstack
+.claude
