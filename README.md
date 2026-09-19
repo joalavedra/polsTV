@@ -128,6 +128,24 @@ before it is ever stored; a rejection or a moderation error/timeout both refuse 
 image per user at a time — a new one replaces the old — and the ticker holds at most 12 items.
 Text messages to the bot are unaffected.
 
+### TV mode and recommendations
+
+`tv.html` is a 10-foot UI for the same channel: the live picture full-bleed, remote/keyboard
+navigation (arrow keys move focus, Enter/OK activates, Backspace/Escape goes back), and a
+bottom-left "You might also like…" rail. Whenever a new scene takes the air, `recs.ts` asks Nebius
+to propose real movie and show titles that match its mood, verifies each one against a keyless
+public catalog — TVmaze for series and live TV, Wikipedia for films (`catalog.ts`) — and keeps the
+best 3; `GET /recs` serves them for whichever scene is on air.
+
+Hold OK on the Talk button (or hold Space anywhere) to ask the channel for something to watch, by
+voice — release to send, same SLNG transcription the viewer page's mic uses. A `concierge` agent
+(per-viewer memory, so "something lighter than the last one" works) has two tools, `lookupTitles`
+and `whatsOnNow`, and only ever recommends a title one of them actually returned that turn: it
+proposes candidate titles, the catalog verifies them, so it cannot recommend one that doesn't exist.
+A vague ask gets one short follow-up question ("movie or a series?") before it recommends anything.
+Saying "put this on the channel", or the same button on a title's detail screen, submits that mood
+as an idea through the same moderated path as `/say`.
+
 ## Sponsor tech
 
 | Sponsor | What it does here |
@@ -139,6 +157,7 @@ Text messages to the bot are unaffected.
 | **Mastra** | The backend framework: three agents (`moderator`, `sceneWriter`, `showrunner`), a Telegram channel via `@chat-adapter/telegram` in polling mode, per-user `Memory` (last 10 messages) on LibSQL storage, and the `registerApiRoute()` custom routes that serve the whole HTTP contract plus both static pages. |
 | **Vonage Video API** | Fan-out: one routed session. The broadcaster publishes a canvas-plus-WebAudio `MediaStreamTrack` with `OT.initPublisher`; every viewer connects with a subscribe-only token from `GET /viewer-token`. |
 | **SLNG** | TTS only: `slng/fish/tts:s2.1-pro` on `eu-west.api.slng.ai` synthesises the channel's voice — the narrator line written for each steer, and the sponsored ad read a viewer unlocks at 3 karma — mixed into the published audio one clip at a time, ducking Director's own audio while it plays. |
+| **Titan OS** | `tv.html`: a 10-foot UI for the channel — remote/keyboard navigation, a "you might also like" rail driven by the scene on air (`recs.ts`), and a `concierge` agent (`concierge.ts`) you can talk to for movie/show picks and what's on live TV, by voice or by typing. Catalog data (TVmaze, Wikipedia) is keyless — see `catalog.ts`. |
 
 ## Quickstart: clone to first message
 
@@ -203,13 +222,17 @@ src/mastra/
 ├── index.ts               Routes, Mastra instance, broadcaster-secret gate, fal-proxy wiring
 ├── channel.ts             In-memory state machine: idea queue, steer lifecycle, likes, karma
 ├── pitch.ts               The karma-gated sponsored voice-over: slot, cooldown, deadline
-├── showrunner.ts          The five Nebius agents: moderation, steering, narration, the pitch
+├── showrunner.ts          The Nebius agents: moderation, steering, narration, the pitch, recs
 ├── announcer.ts           SLNG TTS: synthesises and serves the spoken clips
 ├── telegram.ts            Telegram channel: showrunner agent, its tools, proactive DMs
 ├── vonage.ts              Vonage session creation and token minting
+├── catalog.ts             Keyless catalog: TVmaze (series, live TV) + Wikipedia (films)
+├── recs.ts                Scene -> "you might also like": writes candidates, verifies, stores
+├── concierge.ts           TV concierge agent + POST tv/ask's dependency-injected route logic
 └── public/
     ├── index.html         Viewer page: video, chat, queue, rank, tap-to-like
-    └── broadcaster.html   Broadcaster: Director session, canvas/audio mix, Vonage publish
+    ├── broadcaster.html   Broadcaster: Director session, canvas/audio mix, Vonage publish
+    └── tv.html            TV mode: 10-foot UI, recs rail, talk-to-the-channel concierge
 ```
 
 Tests are colocated as `*.test.ts` next to the file they cover.
