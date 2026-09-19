@@ -999,6 +999,22 @@
   body.chrome-hidden #stage-caption, body.chrome-hidden #say-form,
   body.chrome-hidden #sheet-backdrop, body.chrome-hidden #mute-btn { display: none; }
 
+  /* ---------- Phones: flat fills instead of backdrop-filter ----------
+     Seven translucent backdrop-filter layers were stacked over the moving picture (measured at
+     390x844: 287k blur-px across #live-pill, #mute-btn, four .rail-icons and #say-input). Each
+     one makes the GPU re-read and re-blur the frame behind it. At these sizes the blur only
+     reads on a still screenshot, so phones get an opaque-enough flat fill instead. ---------- */
+  @media (max-width: 820px), (max-height: 500px) and (orientation: landscape) {
+    .pill, .rail-icon, #say-input, #panel, #spend-popover, #share-popover, .toast {
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    .pill, #panel, #spend-popover, #share-popover { background: rgba(12, 12, 14, .88); }
+    .rail-icon { background: rgba(20, 20, 24, .8); }
+    #say-input { background: rgba(20, 20, 24, .88); }
+    .toast { background: rgba(0, 0, 0, .92); }
+  }
+
   /* ================= Desktop (>820px wide, >500px tall) ================= */
   @media (min-width: 821px) and (min-height: 501px) {
     body { overflow: hidden; }
