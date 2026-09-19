@@ -1800,10 +1800,15 @@
     }
     let spendTimer = null;
     let spendOpen = false;
+    // Closed, the popover is a single number on a pill nobody is looking at — and on phones it is
+    // behind the more-sheet, so it is closed essentially always. 5s cost every viewer 12 requests
+    // a minute; 30s keeps the pill moving for 2.
+    const SPEND_POLL_OPEN_MS = 2000;
+    const SPEND_POLL_CLOSED_MS = 30_000;
     function startSpendPolling() {
       clearInterval(spendTimer);
       fetchSpend();
-      spendTimer = setInterval(fetchSpend, spendOpen ? 2000 : 5000);
+      spendTimer = setInterval(fetchSpend, spendOpen ? SPEND_POLL_OPEN_MS : SPEND_POLL_CLOSED_MS);
     }
     function stopSpendPolling() {
       clearInterval(spendTimer);
@@ -1840,7 +1845,12 @@
     // (and whether it's already been liked) without a round trip.
     let lastNow = null;
     let likedIdeaId = null;
+    // A like storm arrives faster than the 1.1s float animation retires nodes, and animationend
+    // never fires for an element whose animation was interrupted — cap the layer so hearts can
+    // never pile up composited over the video.
+    const MAX_HEARTS = 24;
     function spawnHeart(x, y, { float = false } = {}) {
+      while (heartLayer.childElementCount >= MAX_HEARTS) heartLayer.firstElementChild.remove();
       const heart = h("span", `heart-burst${float ? " heart-float" : ""}`, "❤");
       heart.style.left = `${x}px`;
       heart.style.top = `${y}px`;
