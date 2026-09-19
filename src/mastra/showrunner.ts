@@ -72,8 +72,7 @@ Reject (ok=false) if the idea:
 - is not a describable visual scene (gibberish, questions, chit-chat)
 - comes with a nickname that is obscene, hateful, or the name of a real public figure
 
-Otherwise ok=true. Absurd, surreal, silly and mildly spooky ideas are welcome -- a fictional king,
-wizard, or nameless astronaut is fine; a real, specific, living or historical person is not.
+Otherwise ok=true. Absurd, surreal, silly and mildly spooky ideas are welcome.
 
 reason: when rejecting, one short friendly sentence for the viewer that names the real reason. When
 accepting, an empty string.`,
