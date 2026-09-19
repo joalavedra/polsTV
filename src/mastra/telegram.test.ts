@@ -7,13 +7,24 @@ import {
   myStatsLogic,
   pitchToolResult,
   requireTelegramUid,
+  routeDirectMessage,
   SceneHistory,
   sceneChangeMessages,
   sendDM,
   submitIdeaLogic,
   whatsOnLogic,
 } from "./telegram";
-import type { DMSender, MyStatsDeps, SubmitIdeaDeps } from "./telegram";
+import type {
+  DirectMessageDeps,
+  DirectMessageLike,
+  DMSender,
+  MyStatsDeps,
+  SubmitIdeaDeps,
+} from "./telegram";
+import { TICKER_ACCEPTED_REPLY } from "./ticker-intake";
+import type { PhotoIntakeDeps } from "./ticker-intake";
+import { VOICE_NOT_HEARD_REPLY, VOICE_TOO_LONG_REPLY } from "./voice-intake";
+import type { VoiceIntakeDeps } from "./voice-intake";
 
 function scene(overrides: Partial<Scene> = {}): Scene {
   return {
@@ -349,5 +360,190 @@ describe("pitchToolResult", () => {
   it("passes any other refusal straight through without a karma hint", () => {
     const result = pitchToolResult({ ok: false, code: "busy", reason: "Bob has the slot" }, 9);
     expect(result).toEqual({ onAir: false, reason: "Bob has the slot" });
+  });
+});
+
+describe("routeDirectMessage", () => {
+  const ZERO_USAGE = { inputTokens: 0, outputTokens: 0 };
+
+  function thread() {
+    return { post: vi.fn(async (_text: string) => undefined) };
+  }
+
+  /** Typed so it structurally matches routeDirectMessage's generic defaultHandler parameter —
+   * vi.fn's inferred Mock type only satisfies a plain function type when its own implementation
+   * declares the same parameter count. */
+  function fakeDefaultHandler(): (thread: unknown, message: unknown) => Promise<void> {
+    return vi.fn(async (_thread: unknown, _message: unknown) => undefined);
+  }
+
+  function directMessage(overrides: Partial<DirectMessageLike> = {}): DirectMessageLike {
+    return {
+      text: "",
+      raw: {},
+      attachments: ["original-attachment"],
+      author: { userId: "555", userName: "Ana" },
+      ...overrides,
+    };
+  }
+
+  function photoDeps(overrides: Partial<PhotoIntakeDeps> = {}): PhotoIntakeDeps {
+    return {
+      downloadPhoto: vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff])),
+      moderateImage: vi.fn(async () => ({
+        verdict: { ok: true, reason: "" },
+        usage: ZERO_USAGE,
+        ms: 1,
+      })),
+      moderateText: vi.fn(async () => ({ verdict: { ok: true, reason: "" }, usage: ZERO_USAGE })),
+      addItem: vi.fn((input) => ({ id: 1, addedAt: 0, ...input, caption: input.caption })),
+      recordTicker: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  function voiceDeps(overrides: Partial<VoiceIntakeDeps> = {}): VoiceIntakeDeps {
+    return {
+      downloadAudio: vi.fn(async () => new Uint8Array([1, 2, 3])),
+      transcribe: vi.fn(async () => ({ text: "a dancing capybara", audioSeconds: 3 })),
+      recordStt: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  function deps(overrides: Partial<DirectMessageDeps> = {}): DirectMessageDeps {
+    return { photo: photoDeps(), voice: voiceDeps(), ...overrides };
+  }
+
+  it("leaves a normal text message untouched and routes it to the default handler", async () => {
+    const t = thread();
+    const msg = directMessage({ text: "hello there" });
+    const defaultHandler = fakeDefaultHandler();
+    const d = deps();
+    await routeDirectMessage(d, t, msg, defaultHandler);
+    expect(defaultHandler).toHaveBeenCalledWith(t, msg);
+    expect(msg.text).toBe("hello there");
+    expect(t.post).not.toHaveBeenCalled();
+    expect(d.voice.transcribe).not.toHaveBeenCalled();
+    expect(d.photo.moderateImage).not.toHaveBeenCalled();
+  });
+
+  it("leaves a video_note message untouched, same as any other unhandled attachment", async () => {
+    const t = thread();
+    const msg = directMessage({ raw: { video_note: { file_id: "v1", duration: 3 } } });
+    const defaultHandler = fakeDefaultHandler();
+    await routeDirectMessage(deps(), t, msg, defaultHandler);
+    expect(defaultHandler).toHaveBeenCalledWith(t, msg);
+    expect(t.post).not.toHaveBeenCalled();
+  });
+
+  it("routes a photo to the ticker pipeline and never reaches the default handler", async () => {
+    const t = thread();
+    const msg = directMessage({ raw: { photo: [{ file_id: "p1", width: 300, height: 300 }] } });
+    const defaultHandler = fakeDefaultHandler();
+    await routeDirectMessage(deps(), t, msg, defaultHandler);
+    expect(defaultHandler).not.toHaveBeenCalled();
+    expect(t.post).toHaveBeenCalledWith(TICKER_ACCEPTED_REPLY);
+  });
+
+  it("hands a heard transcript to the default handler as the trusted author's msg", async () => {
+    const t = thread();
+    const msg = directMessage({
+      raw: { voice: { file_id: "f1", duration: 4, mime_type: "audio/ogg", file_size: 5_000 } },
+      author: { userId: "555", userName: "Ana" },
+    });
+    const defaultHandler = fakeDefaultHandler();
+    await routeDirectMessage(deps(), t, msg, defaultHandler);
+
+    expect(t.post).toHaveBeenCalledWith('Heard: "a dancing capybara"');
+    expect(defaultHandler).toHaveBeenCalledWith(t, msg);
+    // Same instance handed to defaultHandler, so id/threadId/author (and the trusted
+    // `telegram:<userId>` resourceId derived from it) are exactly what a typed message would carry.
+    expect(msg.text).toBe("a dancing capybara");
+    expect(msg.author.userId).toBe("555");
+    expect(msg.attachments).toEqual([]);
+  });
+
+  it("meters the STT cost for a heard voice note", async () => {
+    const t = thread();
+    const msg = directMessage({
+      raw: { voice: { file_id: "f1", duration: 4, file_size: 5_000 } },
+    });
+    const d = deps();
+    await routeDirectMessage(d, t, msg, fakeDefaultHandler());
+    expect(d.voice.recordStt).toHaveBeenCalledWith("Ana", "a dancing capybara", 3);
+  });
+
+  it("refuses an over-long voice note and never reaches the default handler", async () => {
+    const t = thread();
+    const msg = directMessage({
+      raw: { voice: { file_id: "f1", duration: 31, file_size: 5_000 } },
+    });
+    const defaultHandler = fakeDefaultHandler();
+    const d = deps();
+    await routeDirectMessage(d, t, msg, defaultHandler);
+    expect(t.post).toHaveBeenCalledWith(VOICE_TOO_LONG_REPLY);
+    expect(defaultHandler).not.toHaveBeenCalled();
+    expect(msg.text).toBe("");
+    expect(d.voice.downloadAudio).not.toHaveBeenCalled();
+  });
+
+  it("refuses an oversized voice note and never reaches the default handler", async () => {
+    const t = thread();
+    const msg = directMessage({
+      raw: { voice: { file_id: "f1", duration: 4, file_size: 1_500_001 } },
+    });
+    const defaultHandler = fakeDefaultHandler();
+    await routeDirectMessage(deps(), t, msg, defaultHandler);
+    expect(t.post).toHaveBeenCalledWith(VOICE_TOO_LONG_REPLY);
+    expect(defaultHandler).not.toHaveBeenCalled();
+  });
+
+  it("reports an unintelligible voice note and never reaches the default handler", async () => {
+    const t = thread();
+    const msg = directMessage({
+      raw: { voice: { file_id: "f1", duration: 2, file_size: 5_000 } },
+    });
+    const defaultHandler = fakeDefaultHandler();
+    const d = deps({
+      voice: voiceDeps({ transcribe: vi.fn(async () => ({ text: "  ", audioSeconds: 1 })) }),
+    });
+    await routeDirectMessage(d, t, msg, defaultHandler);
+    expect(t.post).toHaveBeenCalledWith(VOICE_NOT_HEARD_REPLY);
+    expect(defaultHandler).not.toHaveBeenCalled();
+    expect(msg.text).toBe("");
+  });
+
+  it("fails closed with a friendly reply when transcription throws, never hands off", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const t = thread();
+    const msg = directMessage({
+      raw: { voice: { file_id: "f1", duration: 4, file_size: 5_000 } },
+    });
+    const defaultHandler = fakeDefaultHandler();
+    const d = deps({
+      voice: voiceDeps({ transcribe: vi.fn(async () => Promise.reject(new Error("slng down"))) }),
+    });
+    await routeDirectMessage(d, t, msg, defaultHandler);
+    expect(defaultHandler).not.toHaveBeenCalled();
+    expect(msg.text).toBe("");
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("fails closed with a friendly reply when the download throws, never hands off", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const t = thread();
+    const msg = directMessage({
+      raw: { voice: { file_id: "f1", duration: 4, file_size: 5_000 } },
+    });
+    const defaultHandler = fakeDefaultHandler();
+    const d = deps({
+      voice: voiceDeps({ downloadAudio: vi.fn(async () => Promise.reject(new Error("no file"))) }),
+    });
+    await routeDirectMessage(d, t, msg, defaultHandler);
+    expect(defaultHandler).not.toHaveBeenCalled();
+    expect(d.voice.transcribe).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 });
