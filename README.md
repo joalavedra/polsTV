@@ -1,12 +1,15 @@
 # polsTV
 
-One shared, never-cutting AI TV channel that everyone watches at once. Viewers send a one-line idea
+<img width="1792" height="1008" alt="grok-image-9c55a3c0-56fd-4298-a939-11ca1bcac10c" src="https://github.com/user-attachments/assets/75b9e6de-d8f0-4aa0-b83c-07dfddd01bba" />
+
+Twitch meets community AI channel, polsTV. 
+
+Viewers send a one-line idea
 from the web page or by texting the Telegram bot [@timesquarescreenbot](https://t.me/timesquarescreenbot);
 the live shot morphs into each idea without a cut. Tap the screen to like a scene — likes are karma for
 whoever prompted it. Built in one weekend at HackBarna AI Summit 26 (Barcelona, 19–20 Sep 2026).
 
-Who it's for: anyone who wants to watch and steer one shared AI-generated channel together, live,
-instead of prompting a video model alone.
+Who it's for: Useful for digital first streamings like Twitch and Youtube to keep audiences interactive, bars and pubs as background and a draw for younger crowds, and some retail environments, gyms, and waiting areas.
 
 ## How it works
 
@@ -158,6 +161,15 @@ as an idea through the same moderated path as `/say`.
 | **Vonage Video API** | Fan-out: one routed session. The broadcaster publishes a canvas-plus-WebAudio `MediaStreamTrack` with `OT.initPublisher`; every viewer connects with a subscribe-only token from `GET /viewer-token`. |
 | **SLNG** | TTS only: `slng/fish/tts:s2.1-pro` on `eu-west.api.slng.ai` synthesises the channel's voice — the narrator line written for each steer, and the sponsored ad read a viewer unlocks at 3 karma — mixed into the published audio one clip at a time, ducking Director's own audio while it plays. |
 | **Titan OS** | `tv.html`: a 10-foot UI for the channel — remote/keyboard navigation, a "you might also like" rail driven by the scene on air (`recs.ts`), and a `concierge` agent (`concierge.ts`) you can talk to for movie/show picks and what's on live TV, by voice or by typing. Catalog data (TVmaze, Wikipedia) is keyless — see `catalog.ts`. |
+| **Galtea** | Adversarial evaluation of the moderator: a SECURITY dataset red-teamed the real-person rule, and the run found it missed a real person when the idea was written in Spanish. Fixed and re-run before/after — see `docs/eval/GALTEA.md`. |
+
+### Evaluation
+
+`src/mastra/eval.ts` (`POST /b/:secret/eval`) runs the same moderation and steering-prompt pipeline
+as `/say`, with no side effects, for red-teaming. `scripts/redteam_showrunner.py` is a local
+adversarial + benign-control pass across the moderator's spec (en/es/ca); `scripts/galtea/` runs the
+same class of test through Galtea's platform. Findings, the fix, and before/after numbers are in
+`docs/eval/GALTEA.md`.
 
 ## Quickstart: clone to first message
 

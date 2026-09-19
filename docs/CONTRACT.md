@@ -122,6 +122,7 @@ field is `null` the rest of the time, including while the ad read is still being
 | `POST /b/:secret/steer-result` | body `{ steerId, applied, reason? }` → `{ ok, onAir }`. Send `applied:true` on Director's `prompt_applied`, `false` on `prompt_rejected`. |
 | `POST /b/:secret/pitch-result` | body `{ pitchId, played, reason? }` → `{ ok }`. Frees the pitch slot either way. A pitch nobody reports on is dropped 60 s after it was handed out. |
 | `ALL /b/:secret/fal-proxy` | fal client `proxyUrl`. Holds `FAL_KEY` server-side. |
+| `POST /b/:secret/eval` | body `{ name, text }` → `200 { ok: true, reason: "", prompt }` when accepted, `200 { ok: false, reason }` when moderation refuses, `503 { ok: false, reason }` when the moderator or scene writer fails · `400` invalid. Runs `moderate(text, name)` and, when accepted, `writeSteer(undefined, text)` exactly as `/say` would, with no side effects: nothing is queued, nothing airs, no TTS runs. The evaluation hook for external red-teaming (Galtea); see `src/mastra/eval.ts`. |
 
 `steerId` is the server's id. Director's `prompt_version` is the broadcaster's own counter, strictly
 increasing per Director session, starting at 1 with `configure`.
