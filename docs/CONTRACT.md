@@ -50,7 +50,7 @@ scenes have aired in this process's lifetime.
 interface Status {
   live: boolean;            // broadcaster polled within the last 15 s
   viewers: number;
-  now: { ideaId; uid; name; text; prompt; airedAt; likes } | null;   // scene on air
+  now: { ideaId; uid; name; text; prompt; airedAt; likes; karma } | null; // scene on air; karma = its prompter's, live
   steering: { name; text } | null;                                   // sent to Director, not on screen yet (~20 s)
   queue: { id; name; text; karma }[];
   chat: { id; name; text; at; karma }[];                             // last 50
