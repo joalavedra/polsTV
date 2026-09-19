@@ -142,6 +142,15 @@ Text messages to the bot are unaffected.
 | **Mastra** | The backend framework: three agents (`moderator`, `sceneWriter`, `showrunner`), a Telegram channel via `@chat-adapter/telegram` in polling mode, per-user `Memory` (last 10 messages) on LibSQL storage, and the `registerApiRoute()` custom routes that serve the whole HTTP contract plus both static pages. |
 | **Vonage Video API** | Fan-out: one routed session. The broadcaster publishes a canvas-plus-WebAudio `MediaStreamTrack` with `OT.initPublisher`; every viewer connects with a subscribe-only token from `GET /viewer-token`. |
 | **SLNG** | `slng/fish/tts:s2.1-pro` on `eu-west.api.slng.ai` synthesises the channel's voice — the narrator line written for each steer, and the sponsored ad read a viewer unlocks at 3 karma — mixed into the published audio one clip at a time, ducking Director's own audio while it plays. Voice notes to the bot are transcribed with SLNG. |
+| **Galtea** | Adversarial evaluation of the moderator: a SECURITY dataset red-teamed the real-person rule, and the run found it missed a real person when the idea was written in Spanish. Fixed and re-run before/after — see `docs/eval/GALTEA.md`. |
+
+### Evaluation
+
+`src/mastra/eval.ts` (`POST /b/:secret/eval`) runs the same moderation and steering-prompt pipeline
+as `/say`, with no side effects, for red-teaming. `scripts/redteam_showrunner.py` is a local
+adversarial + benign-control pass across the moderator's spec (en/es/ca); `scripts/galtea/` runs the
+same class of test through Galtea's platform. Findings, the fix, and before/after numbers are in
+`docs/eval/GALTEA.md`.
 
 ## Quickstart: clone to first message
 
