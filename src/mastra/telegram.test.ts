@@ -61,13 +61,10 @@ describe("submitIdeaLogic", () => {
   });
 
   it("reports the channel's reason when the user already has a queued idea", async () => {
-    const d = deps({
-      addIdea: vi.fn(
-        (): AddResult => ({ ok: false, reason: "You already have an idea in the queue. Wait until it airs." }),
-      ),
-    });
+    const alreadyQueued = "You already have an idea in the queue. Wait until it airs.";
+    const d = deps({ addIdea: vi.fn((): AddResult => ({ ok: false, reason: alreadyQueued })) });
     const result = await submitIdeaLogic(d, "telegram:1", "Ana", "a second idea");
-    expect(result).toEqual({ queued: false, reason: "You already have an idea in the queue. Wait until it airs." });
+    expect(result).toEqual({ queued: false, reason: alreadyQueued });
   });
 
   it("fails closed with a friendly reason when moderation throws", async () => {
@@ -161,19 +158,22 @@ describe("myStatsLogic", () => {
   });
 
   it("reports the caller's queued idea with its position", () => {
-    const d = deps({
-      myIdea: vi.fn(() => ({ id: 1, uid: "telegram:1", name: "Ana", text: "a cat", source: "telegram" as const, at: 0 })),
-      queuePosition: vi.fn(() => 3),
-    });
+    const idea = {
+      id: 1,
+      uid: "telegram:1",
+      name: "Ana",
+      text: "a cat",
+      source: "telegram" as const,
+      at: 0,
+    };
+    const d = deps({ myIdea: vi.fn(() => idea), queuePosition: vi.fn(() => 3) });
     const result = myStatsLogic("telegram:1", d);
     expect(result.queued).toEqual({ text: "a cat", position: 3 });
   });
 
   it("reports recent aired scenes with their like counts", () => {
-    const d = deps({
-      recentScenes: vi.fn(() => [scene({ text: "a cat", likes: 4 }), scene({ text: "a dog", likes: 0 })]),
-      isOnAir: vi.fn(() => true),
-    });
+    const scenes = [scene({ text: "a cat", likes: 4 }), scene({ text: "a dog", likes: 0 })];
+    const d = deps({ recentScenes: vi.fn(() => scenes), isOnAir: vi.fn(() => true) });
     const result = myStatsLogic("telegram:1", d);
     expect(result.onAirNow).toBe(true);
     expect(result.recentScenes).toEqual([
@@ -203,8 +203,11 @@ describe("SceneHistory", () => {
 
 describe("sceneChangeMessages", () => {
   it("DMs the new prompter and skips a like message when nothing ended", () => {
-    const jobs = sceneChangeMessages({ onAir: scene({ uid: "telegram:1" }), ended: undefined }, "https://watch");
-    expect(jobs).toEqual([{ uid: "telegram:1", text: "You're on air now! Watch polsTV: https://watch" }]);
+    const change = { onAir: scene({ uid: "telegram:1" }), ended: undefined };
+    const jobs = sceneChangeMessages(change, "https://watch");
+    expect(jobs).toEqual([
+      { uid: "telegram:1", text: "You're on air now! Watch polsTV: https://watch" },
+    ]);
   });
 
   it("adds a like message only when the ended scene earned at least one like", () => {
@@ -222,7 +225,8 @@ describe("sceneChangeMessages", () => {
   });
 
   it("uses singular 'like' for exactly one like", () => {
-    const jobs = sceneChangeMessages({ onAir: undefined, ended: scene({ likes: 1 }) }, "https://watch");
+    const change = { onAir: undefined, ended: scene({ likes: 1 }) };
+    const jobs = sceneChangeMessages(change, "https://watch");
     expect(jobs[0]?.text).toContain("1 like (");
   });
 });

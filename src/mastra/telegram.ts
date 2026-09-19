@@ -1,8 +1,8 @@
 /**
  * The Telegram side of the channel: the showrunner agent, its tools, and the two proactive DMs
- * ("you're on air", "your scene got N likes"). Telegram identity is `telegram:<userId>` end to end
- * (Mastra's default channel resourceId), which for a private chat is also the Bot API chat id — see
- * docs/cards/mastra-nebius.md section 4.
+ * ("you're on air", "your scene got N likes"). Telegram identity is `telegram:<userId>` end to
+ * end (Mastra's default channel resourceId), which for a private chat is also the Bot API chat
+ * id — see docs/cards/mastra-nebius.md section 4.
  */
 import { createTelegramAdapter } from "@chat-adapter/telegram";
 import { Agent } from "@mastra/core/agent";
@@ -26,14 +26,14 @@ export function watchLink(): string {
 /** Fails fast: a Telegram tool must never trust a uid the model could have supplied itself. */
 export function requireTelegramUid(resourceId: string | undefined): string {
   if (!resourceId || !resourceId.startsWith(TELEGRAM_PREFIX)) {
-    throw new Error(
-      `Telegram tool called without a "${TELEGRAM_PREFIX}<id>" resourceId (got: ${resourceId ?? "none"})`,
-    );
+    const got = resourceId ?? "none";
+    const wanted = `"${TELEGRAM_PREFIX}<id>"`;
+    throw new Error(`Telegram tool called without a ${wanted} resourceId, got: ${got}`);
   }
   return resourceId;
 }
 
-/** The sender's Telegram display name, from the trusted channel context Mastra attaches per turn. */
+/** The sender's Telegram display name, from the trusted channel context Mastra attaches per turn */
 export function displayName(rawChannelContext: unknown): string {
   const userName = (rawChannelContext as ChannelContext | undefined)?.userName?.trim();
   return userName && userName.length > 0 ? userName.slice(0, 24) : "a viewer";
@@ -101,9 +101,9 @@ export async function submitIdeaLogic(
 export const submitIdea = createTool({
   id: "submit-idea",
   description:
-    `Queue the caller's idea for the next scene on ${CHANNEL_NAME}, the shared live AI TV channel. ` +
-    "Moderates it first. Returns whether it was queued, its position in line and the rough wait in " +
-    "seconds, or the reason it was turned down.",
+    `Queue the caller's idea for the next scene on ${CHANNEL_NAME}, the shared live AI TV ` +
+    "channel. Moderates it first. Returns whether it was queued, its position in line and the " +
+    "rough wait in seconds, or the reason it was turned down.",
   inputSchema: z.object({
     text: z
       .string()
@@ -145,8 +145,9 @@ export interface WhatsOnResult {
 }
 
 export function whatsOnLogic(status: Status, link: string): WhatsOnResult {
+  const now = status.now;
   return {
-    onAir: status.now ? { by: status.now.name, text: status.now.text, likes: status.now.likes } : null,
+    onAir: now ? { by: now.name, text: now.text, likes: now.likes } : null,
     steering: status.steering ? { by: status.steering.name, text: status.steering.text } : null,
     queueLength: status.queue.length,
     viewers: status.viewers,
@@ -200,8 +201,8 @@ export function myStatsLogic(uid: string, deps: MyStatsDeps): MyStatsResult {
 export const myStats = createTool({
   id: "my-stats",
   description:
-    "Look up the caller's own karma, their queued idea if they have one, whether their scene is on " +
-    "air right now, and their recently aired scenes with like counts.",
+    "Look up the caller's own karma, their queued idea if they have one, whether their scene " +
+    "is on air right now, and their recently aired scenes with like counts.",
   inputSchema: z.object({}),
   outputSchema: z.object({
     karma: z.number().int(),
@@ -274,7 +275,7 @@ export async function sendDM(uid: string, text: string, sender: DMSender): Promi
     await sender.native(chatId, text);
     return;
   } catch (nativeError) {
-    console.warn(`telegram DM to ${uid}: native route failed, falling back to raw fetch`, nativeError);
+    console.warn(`telegram DM to ${uid}: native route failed, falling back to fetch`, nativeError);
   }
   try {
     await sender.fallback(chatId, text);
@@ -295,7 +296,7 @@ async function nativeSend(chatId: string, text: string): Promise<void> {
   await chat.thread(`${TELEGRAM_PREFIX}${chatId}`).post(text);
 }
 
-/** Fallback that cannot fail on its own terms: a plain Bot API call (docs/cards/mastra-nebius.md). */
+/** Fallback route that cannot fail on its own: a plain Bot API call (mastra-nebius.md). */
 async function fallbackSend(chatId: string, text: string): Promise<void> {
   const token = process.env["TELEGRAM_BOT_TOKEN"];
   if (!token) throw new Error("TELEGRAM_BOT_TOKEN is missing, cannot DM Telegram users");
@@ -326,10 +327,13 @@ export interface DMJob {
 /** Pure: what to DM given a resolved steer. No network, no Mastra — easy to unit test. */
 export function sceneChangeMessages({ onAir, ended }: SceneChange, link: string): DMJob[] {
   const jobs: DMJob[] = [];
-  if (onAir) jobs.push({ uid: onAir.uid, text: `You're on air now! Watch ${CHANNEL_NAME}: ${link}` });
+  if (onAir) {
+    jobs.push({ uid: onAir.uid, text: `You're on air now! Watch ${CHANNEL_NAME}: ${link}` });
+  }
   if (ended && ended.likes > 0) {
     const noun = ended.likes === 1 ? "like" : "likes";
-    jobs.push({ uid: ended.uid, text: `Your scene got ${ended.likes} ${noun} (+${ended.likes} karma)` });
+    const karma = ended.likes;
+    jobs.push({ uid: ended.uid, text: `Your scene got ${karma} ${noun} (+${karma} karma)` });
   }
   return jobs;
 }

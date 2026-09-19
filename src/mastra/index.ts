@@ -63,7 +63,7 @@ async function page(file: "index.html" | "broadcaster.html"): Promise<string> {
 export const mastra = new Mastra({
   agents: { moderator, sceneWriter, showrunner },
   // Channels (Telegram) need storage on the Mastra instance or subscriptions, dedup and approvals
-  // reset on every restart. Also backs the showrunner's per-user memory (docs/cards/mastra-nebius.md).
+  // reset on every restart. Also backs the showrunner's per-user memory (docs/cards/mastra-nebius).
   storage: new LibSQLStore({ id: "mastra-storage", url: "file:./mastra.db" }),
   server: {
     // Hosts inject PORT; parallel dev servers set it to avoid the 4111 default.
