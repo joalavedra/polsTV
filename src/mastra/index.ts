@@ -46,10 +46,11 @@ const falProxy = createRouteHandler({
 });
 
 // `mastra dev` does not serve src/mastra/public, and Studio's catch-all owns every other path, so
-// the two pages get explicit routes. `mastra build` copies public/ next to the bundle; `mastra dev`
-// instead runs with src/mastra/public as its working directory. Read per request so page edits
-// show up without a restart.
-const pageDirs = [join(import.meta.dirname, "public"), process.cwd()];
+// the two pages get explicit routes. `mastra dev` runs with src/mastra/public as its working
+// directory; `mastra build` copies that folder's files next to the bundle. cwd comes first so dev
+// never serves a stale copy left in .mastra/output by an earlier build. Read per request so page
+// edits show up without a restart.
+const pageDirs = [process.cwd(), import.meta.dirname];
 
 async function page(file: "index.html" | "broadcaster.html"): Promise<string> {
   for (const dir of pageDirs) {
