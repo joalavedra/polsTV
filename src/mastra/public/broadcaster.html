@@ -135,7 +135,6 @@
       openedAt: undefined,
       maxSessionSeconds: undefined,
       rotateTriggered: false,
-      stopping: false,
       onLiveOnce: undefined,
     },
   };
@@ -399,6 +398,7 @@
       }
     }
     d.session = undefined;
+    d.token = undefined;
     d.fal = undefined;
     d.video = undefined;
     d.openedAt = undefined;
@@ -406,7 +406,6 @@
     d.rotateTriggered = false;
     d.versionToSteerId = new Map();
     d.pendingSteerId = undefined;
-    d.stopping = false;
     setActiveVideo(undefined);
     setPhase(phase);
   }
@@ -414,7 +413,6 @@
   function stopDirectorDeliberately() {
     const d = state.director;
     if (!d.session) return;
-    d.stopping = true;
     try {
       d.session.send({ type: "stop" });
     } catch {
@@ -484,8 +482,6 @@
   function handleDirectorSdkError(error) {
     const message = String(error?.message ?? error);
     log("director_sdk_error", { message });
-    // Benign after a deliberate {type:"stop"} (docs/cards/director.md, spike results).
-    if (state.director.stopping && message.includes("control data channel closed")) return;
     const steerId = state.director.pendingSteerId;
     if (steerId !== undefined) {
       state.director.pendingSteerId = undefined;
@@ -522,6 +518,8 @@
   async function openDirectorSession(prompt, steerId, extra = {}) {
     if (!canOpenSession()) {
       log("director_open_blocked", { reason: "rate_limit" });
+      // Resolve the steer, or the server keeps returning it and the queue wedges behind it.
+      if (steerId !== undefined) reportSteerResult(steerId, false, "open_rate_limited");
       return setPhase("ERROR");
     }
     state.opens.push(Date.now());
@@ -545,14 +543,21 @@
     d.maxSessionSeconds = undefined;
     d.openedAt = Date.now();
     d.rotateTriggered = false;
-    d.stopping = false;
     d.onLiveOnce = extra.onLive;
+    // A session keeps firing callbacks after it is replaced or closed: a stopped one always ends
+    // with onError("control data channel closed"). Without this guard that late error from the
+    // OLD session tears down the NEW one during rotation. Only the current session is heard.
+    const token = Symbol("director-session");
+    d.token = token;
+    const ifCurrent = (handler) => (...args) => {
+      if (state.director.token === token) handler(...args);
+    };
     d.session = fal.realtime.open(wma("minimax/h3-max/director"), {
       receive: ["video", "audio"],
-      onState: (s) => log("director_state", { state: s }),
-      onError: handleDirectorSdkError,
-      onMedia: (stream) => attachDirectorMedia(stream, video),
-      onData: handleDirectorData,
+      onState: ifCurrent((s) => log("director_state", { state: s })),
+      onError: ifCurrent(handleDirectorSdkError),
+      onMedia: ifCurrent((stream) => attachDirectorMedia(stream, video)),
+      onData: ifCurrent(handleDirectorData),
     });
     d.session.send({
       type: "configure",
