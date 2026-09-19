@@ -5,6 +5,7 @@ import {
   NEBIUS_OUTPUT_USD_PER_MILLION_TOKENS,
   SLNG_MICRODOLLARS_PER_AUDIO_MINUTE,
   SLNG_MP3_BYTES_PER_SECOND,
+  SLNG_STT_MICRODOLLARS_PER_AUDIO_MINUTE,
   SpendLedger,
   VONAGE_USD_PER_PARTICIPANT_MINUTE,
 } from "./spend";
@@ -31,6 +32,16 @@ describe("rate maths", () => {
     const { slng } = ledger.snapshot().byProvider;
     expect(slng.audioSeconds).toBeCloseTo(60, 9);
     expect(slng.usd).toBeCloseTo(SLNG_MICRODOLLARS_PER_AUDIO_MINUTE / 1_000_000, 9);
+    expect(slng.calls).toBe(1);
+  });
+
+  it("prices an STT call from audio seconds at the STT rate, pooled into the slng bucket", () => {
+    const ledger = new SpendLedger();
+    ledger.recordStt("rejected", "Ana", "a cat", 30);
+    const { slng } = ledger.snapshot().byProvider;
+    expect(slng.audioSeconds).toBeCloseTo(30, 9);
+    const expectedUsd = (30 / 60) * (SLNG_STT_MICRODOLLARS_PER_AUDIO_MINUTE / 1_000_000);
+    expect(slng.usd).toBeCloseTo(expectedUsd, 9);
     expect(slng.calls).toBe(1);
   });
 
@@ -139,6 +150,27 @@ describe("attribution", () => {
     const snap = ledger.snapshot();
     const expectedIdleUsd = 4 * FAL_DIRECTOR_USD_PER_SECOND + 1 * VONAGE_USD_PER_PARTICIPANT_MINUTE;
     expect(snap.idle.usd).toBeCloseTo(expectedIdleUsd, 9);
+    expect(snap.scenes).toHaveLength(0);
+  });
+});
+
+describe("STT attribution", () => {
+  it("moves STT cost into the scene once the idea it transcribed airs", () => {
+    const ledger = new SpendLedger();
+    ledger.recordModeration(5, "Timba", "a clay capybara", { inputTokens: 10, outputTokens: 5 });
+    ledger.recordStt(5, "Timba", "a clay capybara", 3);
+    expect(ledger.snapshot().notAired.usd).toBeGreaterThan(0);
+    ledger.markAired(5, "Timba", "a clay capybara");
+    const scene = ledger.snapshot().scenes[0];
+    expect(scene?.byProvider.slng).toBeGreaterThan(0);
+  });
+
+  it("keeps a refused idea's STT cost in notAired forever, same as its moderation cost", () => {
+    const ledger = new SpendLedger();
+    ledger.recordStt("rejected", "Ana", "gibberish", 4);
+    const snap = ledger.snapshot();
+    expect(snap.notAired.usd).toBeGreaterThan(0);
+    expect(snap.notAired.usd).toBeCloseTo(totalOf(ledger), 9);
     expect(snap.scenes).toHaveLength(0);
   });
 });

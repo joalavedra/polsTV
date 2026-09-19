@@ -24,6 +24,12 @@ export const SLNG_MICRODOLLARS_PER_AUDIO_MINUTE = 110;
 // SLNG mp3s come back 128 kbps CBR: 128_000 bits/s / 8 bits/byte.
 export const SLNG_MP3_BYTES_PER_SECOND = 16_000;
 
+// SLNG deepgram/nova:3 STT (transcriber.ts) — the multilingual model, not slng/deepgram/nova:3-en,
+// which has no eu-west deployment. Verified live 2026-09-19 the same way as the TTS rate above:
+// `GET https://api.slng.ai/v1/catalog/models?service_type=stt`, the deepgram/nova:3 entry's
+// `pricing.min_price`, same unconfirmed-unit caveat as SLNG_MICRODOLLARS_PER_AUDIO_MINUTE.
+export const SLNG_STT_MICRODOLLARS_PER_AUDIO_MINUTE = 75;
+
 // Vonage Video. docs/cards/vonage.md §7. New accounts get 75,000 free participant-minutes, which
 // covers this project today, but the meter still runs so judges can see the real rate.
 export const VONAGE_USD_PER_PARTICIPANT_MINUTE = 0.0041;
@@ -46,7 +52,9 @@ export const RATES = {
   },
   slng: {
     microdollarsPerAudioMinute: SLNG_MICRODOLLARS_PER_AUDIO_MINUTE,
+    sttMicrodollarsPerAudioMinute: SLNG_STT_MICRODOLLARS_PER_AUDIO_MINUTE,
     model: "slng/fish/tts:s2.1-pro",
+    sttModel: "deepgram/nova:3",
     note: "unit unconfirmed by SLNG's own docs; treat as an estimate",
   },
   vonage: {
@@ -96,6 +104,10 @@ function nebiusCost(usage: TokenUsage): number {
 
 function slngCost(audioSeconds: number): number {
   return (audioSeconds / 60) * (SLNG_MICRODOLLARS_PER_AUDIO_MINUTE / 1_000_000);
+}
+
+function slngSttCost(audioSeconds: number): number {
+  return (audioSeconds / 60) * (SLNG_STT_MICRODOLLARS_PER_AUDIO_MINUTE / 1_000_000);
 }
 
 function zeroProviderUsd(): ProviderUsd {
@@ -157,6 +169,21 @@ export class SpendLedger {
     this.slng.calls += 1;
     this.notAiredUsd += usd;
     this.chargePending(ideaId, name, text, "slng", usd);
+  }
+
+  /**
+   * Charge one SLNG STT call (transcriber.ts). `target` follows the same rule as
+   * `recordModeration`: the idea's id once it has a queue slot, or "rejected" when it never gets
+   * one (moderation failed it, the transcript was too short to become an idea, or the queue turned
+   * it down as a duplicate) — a refused idea's listening cost joins its judging cost in notAired.
+   */
+  recordStt(target: number | "rejected", name: string, text: string, audioSeconds: number): void {
+    const usd = slngSttCost(audioSeconds);
+    this.slng.usd += usd;
+    this.slng.audioSeconds += audioSeconds;
+    this.slng.calls += 1;
+    this.notAiredUsd += usd;
+    if (target !== "rejected") this.chargePending(target, name, text, "slng", usd);
   }
 
   /** Charge fal Director open-session seconds to the scene on air, or "idle" when none is. */
