@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Channel, STEER_GAP_MS } from "./channel";
+import { Channel, MAX_AMENDS_PER_SCENE, STEER_GAP_MS } from "./channel";
 
 function setup() {
   let clock = 1_000_000;
@@ -9,12 +9,23 @@ function setup() {
   };
   const say = (uid: string, text: string) =>
     channel.addIdea({ uid, name: uid.toUpperCase(), text, source: "web" });
-  return { channel, tick, say };
+  const amend = (uid: string, text: string) =>
+    channel.addIdea({ uid, name: uid.toUpperCase(), text, source: "web", kind: "amend" });
+  return { channel, tick, say, amend };
 }
 
 /** Queue an idea, steer it, and mark the steer applied so it is the scene on air. */
 function air(ctx: ReturnType<typeof setup>, uid: string, text: string) {
   const added = ctx.say(uid, text);
+  if (!added.ok) throw new Error(added.reason);
+  ctx.tick(STEER_GAP_MS);
+  const steer = ctx.channel.beginSteer(added.idea.id, `prompt for ${text}`);
+  return ctx.channel.resolveSteer(steer.steerId, true);
+}
+
+/** Queue an amend, steer it, and mark the steer applied so it lands on the scene on air. */
+function applyAmend(ctx: ReturnType<typeof setup>, uid: string, text: string) {
+  const added = ctx.amend(uid, text);
   if (!added.ok) throw new Error(added.reason);
   ctx.tick(STEER_GAP_MS);
   const steer = ctx.channel.beginSteer(added.idea.id, `prompt for ${text}`);
@@ -99,7 +110,7 @@ describe("steering", () => {
     ctx.tick(STEER_GAP_MS);
     const steer = ctx.channel.beginSteer(bad.idea.id, "p");
     const outcome = ctx.channel.resolveSteer(steer.steerId, false);
-    expect(outcome).toEqual({ onAir: undefined, ended: undefined });
+    expect(outcome).toEqual({ onAir: undefined, ended: undefined, amended: false });
     const status = ctx.channel.status();
     expect(status.now?.text).toBe("a cat");
     expect(status.queue).toHaveLength(0);
@@ -110,7 +121,7 @@ describe("steering", () => {
     const ctx = setup();
     air(ctx, "ana", "a cat");
     const outcome = ctx.channel.resolveSteer(9999, true);
-    expect(outcome).toEqual({ onAir: undefined, ended: undefined });
+    expect(outcome).toEqual({ onAir: undefined, ended: undefined, amended: false });
     expect(ctx.channel.status().now?.text).toBe("a cat");
   });
 
@@ -163,8 +174,131 @@ describe("steering", () => {
     ctx.tick(STEER_GAP_MS);
     ctx.channel.beginSteer(a.idea.id, "p");
     const status = ctx.channel.status();
-    expect(status.steering).toEqual({ name: "ANA", text: "a cat" });
+    expect(status.steering).toEqual({ name: "ANA", text: "a cat", kind: "new" });
     expect(status.queue).toHaveLength(0);
+  });
+});
+
+describe("amends", () => {
+  it("refuses an amend when nothing is on air", () => {
+    const ctx = setup();
+    const result = ctx.amend("ana", "add a hat");
+    expect(result).toEqual({
+      ok: false,
+      reason: "Nothing is on air to change yet; send an idea first.",
+    });
+  });
+
+  it("accepts an amend once a scene is on air, tagged with the scene it targets", () => {
+    const ctx = setup();
+    const aired = air(ctx, "ana", "a cat");
+    const result = ctx.amend("bob", "add a hat");
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("setup failed");
+    expect(result.idea.forIdeaId).toBe(aired.onAir?.ideaId);
+  });
+
+  it("refuses a 4th amend once a scene has had its three changes", () => {
+    const ctx = setup();
+    air(ctx, "ana", "a cat");
+    applyAmend(ctx, "bob", "change 1");
+    applyAmend(ctx, "carol", "change 2");
+    applyAmend(ctx, "dave", "change 3");
+    const fourth = ctx.amend("erin", "change 4");
+    expect(fourth).toEqual({
+      ok: false,
+      reason: "This scene has had its three changes; send a new idea.",
+    });
+  });
+
+  it(`allows exactly ${MAX_AMENDS_PER_SCENE} amends on one scene`, () => {
+    const ctx = setup();
+    air(ctx, "ana", "a cat");
+    const outcome1 = applyAmend(ctx, "bob", "change 1");
+    const outcome2 = applyAmend(ctx, "carol", "change 2");
+    const outcome3 = applyAmend(ctx, "dave", "change 3");
+    expect(outcome3.onAir?.amends).toEqual([
+      { name: "BOB", text: "change 1" },
+      { name: "CAROL", text: "change 2" },
+      { name: "DAVE", text: "change 3" },
+    ]);
+    expect(outcome1.onAir).toBe(outcome2.onAir);
+    expect(outcome2.onAir).toBe(outcome3.onAir);
+  });
+
+  it("orders amends ahead of new ideas, oldest amend first", () => {
+    const ctx = setup();
+    air(ctx, "ana", "a cat");
+    ctx.say("bob", "a totally new scene");
+    ctx.tick(1);
+    ctx.amend("carol", "add a hat");
+    ctx.tick(1);
+    ctx.amend("dave", "make it snow");
+
+    expect(ctx.channel.nextIdea()?.uid).toBe("carol");
+    ctx.channel.dropIdea(ctx.channel.nextIdea()?.id ?? -1);
+    expect(ctx.channel.nextIdea()?.uid).toBe("dave");
+    ctx.channel.dropIdea(ctx.channel.nextIdea()?.id ?? -1);
+    expect(ctx.channel.nextIdea()?.uid).toBe("bob");
+  });
+
+  it("respects the steer gap and one-in-flight rule for amends like any other steer", () => {
+    const ctx = setup();
+    air(ctx, "ana", "a cat");
+    const added = ctx.amend("bob", "add a hat");
+    if (!added.ok) throw new Error("setup failed");
+    expect(ctx.channel.canSteer()).toBe(false);
+    expect(() => ctx.channel.beginSteer(added.idea.id, "p")).toThrow();
+    ctx.tick(STEER_GAP_MS);
+    expect(ctx.channel.canSteer()).toBe(true);
+    ctx.channel.beginSteer(added.idea.id, "p");
+    expect(ctx.channel.canSteer()).toBe(false);
+  });
+
+  it("keeps karma flowing to the original prompter after an amend", () => {
+    const ctx = setup();
+    air(ctx, "ana", "a cat");
+    applyAmend(ctx, "bob", "add a hat");
+    ctx.channel.like("carol");
+    expect(ctx.channel.karmaOf("ana")).toBe(1);
+    expect(ctx.channel.karmaOf("bob")).toBe(0);
+    expect(ctx.channel.status().now?.uid).toBe("ana");
+    expect(ctx.channel.status().now?.karma).toBe(1);
+  });
+
+  it("does not end the scene when an amend is applied, and keeps the scene's identity", () => {
+    const ctx = setup();
+    const original = air(ctx, "ana", "a cat");
+    const outcome = applyAmend(ctx, "bob", "add a hat");
+    expect(outcome.ended).toBeUndefined();
+    expect(outcome.amended).toBe(true);
+    expect(outcome.onAir?.ideaId).toBe(original.onAir?.ideaId);
+    expect(outcome.onAir?.uid).toBe("ana");
+    expect(outcome.onAir?.text).toBe("a cat");
+    expect(outcome.onAir?.prompt).toBe("prompt for add a hat");
+    expect(outcome.onAir?.amends).toEqual([{ name: "BOB", text: "add a hat" }]);
+    expect(ctx.channel.status().steering).toBeNull();
+  });
+
+  it("flags an amend as stale once its target scene is no longer on air", () => {
+    const ctx = setup();
+    air(ctx, "ana", "a cat");
+    const added = ctx.amend("bob", "add a hat");
+    if (!added.ok) throw new Error("setup failed");
+    expect(ctx.channel.isStaleAmend(added.idea)).toBe(false);
+    air(ctx, "carol", "a dog");
+    expect(ctx.channel.isStaleAmend(added.idea)).toBe(true);
+  });
+
+  it("refuses to apply an amend whose target scene already ended", () => {
+    const ctx = setup();
+    air(ctx, "ana", "a cat");
+    const added = ctx.amend("bob", "add a hat");
+    if (!added.ok) throw new Error("setup failed");
+    air(ctx, "carol", "a dog");
+    ctx.tick(STEER_GAP_MS);
+    const steer = ctx.channel.beginSteer(added.idea.id, "p");
+    expect(() => ctx.channel.resolveSteer(steer.steerId, true)).toThrow();
   });
 });
 

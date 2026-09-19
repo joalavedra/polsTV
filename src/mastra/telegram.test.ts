@@ -24,6 +24,7 @@ function scene(overrides: Partial<Scene> = {}): Scene {
     prompt: "p",
     airedAt: 0,
     likes: 0,
+    amends: [],
     ...overrides,
   };
 }
@@ -37,7 +38,15 @@ describe("submitIdeaLogic", () => {
       addIdea: vi.fn(
         (): AddResult => ({
           ok: true,
-          idea: { id: 1, uid: "telegram:1", name: "Ana", text: "x", source: "telegram", at: 0 },
+          idea: {
+            id: 1,
+            uid: "telegram:1",
+            name: "Ana",
+            text: "x",
+            source: "telegram",
+            at: 0,
+            kind: "new",
+          },
         }),
       ),
       queuePosition: vi.fn(() => 1),
@@ -55,6 +64,19 @@ describe("submitIdeaLogic", () => {
       name: "Ana",
       text: "a cat riding a bike",
       source: "telegram",
+      kind: "new",
+    });
+  });
+
+  it("queues an amend with kind: amend when the caller asked to change the scene on air", async () => {
+    const d = deps();
+    await submitIdeaLogic(d, "telegram:1", "Ana", "add a hat", "amend");
+    expect(d.addIdea).toHaveBeenCalledWith({
+      uid: "telegram:1",
+      name: "Ana",
+      text: "add a hat",
+      source: "telegram",
+      kind: "amend",
     });
   });
 
@@ -141,8 +163,8 @@ describe("whatsOnLogic", () => {
         live: true,
         viewers: 5,
         now: { ...scene({ name: "Ana", text: "a cat", likes: 3 }), karma: 3 },
-        steering: { name: "Bob", text: "a dog" },
-        queue: [{ id: 2, name: "Carol", text: "a bird", karma: 1 }],
+        steering: { name: "Bob", text: "a dog", kind: "new" },
+        queue: [{ id: 2, name: "Carol", text: "a bird", karma: 1, kind: "new" }],
         chat: [],
         rank: [],
         ts: 0,
@@ -193,6 +215,7 @@ describe("myStatsLogic", () => {
       text: "a cat",
       source: "telegram" as const,
       at: 0,
+      kind: "new" as const,
     };
     const d = deps({ myIdea: vi.fn(() => idea), queuePosition: vi.fn(() => 3) });
     const result = myStatsLogic("telegram:1", d);
@@ -231,29 +254,35 @@ describe("SceneHistory", () => {
 
 describe("sceneChangeMessages", () => {
   it("DMs the new prompter and skips a like message when nothing ended", () => {
-    const change = { onAir: scene({ uid: "telegram:1" }), ended: undefined };
+    const change = { onAir: scene({ uid: "telegram:1" }), ended: undefined, amended: false };
     const jobs = sceneChangeMessages(change, "https://watch");
     expect(jobs).toEqual([
       { uid: "telegram:1", text: "You're on air now! Watch polsTV: https://watch" },
     ]);
   });
 
+  it("skips the 'you're on air' DM when the scene on air was only amended, not new", () => {
+    const change = { onAir: scene({ uid: "telegram:1" }), ended: undefined, amended: true };
+    const jobs = sceneChangeMessages(change, "https://watch");
+    expect(jobs).toEqual([]);
+  });
+
   it("adds a like message only when the ended scene earned at least one like", () => {
     const zeroLikes = sceneChangeMessages(
-      { onAir: undefined, ended: scene({ uid: "telegram:2", likes: 0 }) },
+      { onAir: undefined, ended: scene({ uid: "telegram:2", likes: 0 }), amended: false },
       "https://watch",
     );
     expect(zeroLikes).toEqual([]);
 
     const withLikes = sceneChangeMessages(
-      { onAir: undefined, ended: scene({ uid: "telegram:2", likes: 3 }) },
+      { onAir: undefined, ended: scene({ uid: "telegram:2", likes: 3 }), amended: false },
       "https://watch",
     );
     expect(withLikes).toEqual([{ uid: "telegram:2", text: "Your scene got 3 likes (+3 karma)" }]);
   });
 
   it("uses singular 'like' for exactly one like", () => {
-    const change = { onAir: undefined, ended: scene({ likes: 1 }) };
+    const change = { onAir: undefined, ended: scene({ likes: 1 }), amended: false };
     const jobs = sceneChangeMessages(change, "https://watch");
     expect(jobs[0]?.text).toContain("1 like (");
   });

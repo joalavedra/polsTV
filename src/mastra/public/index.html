@@ -612,6 +612,39 @@
   #toast-region .toast { max-width: min(90vw, 32rem); }
   /* pitch:end */
 
+  /* amend:start — "Yes, and": change one thing about the scene on air. Self-contained, safe to
+     drop in a conflict, mirrors the pitch:start/end block above. */
+  .amend-toggle { display: flex; gap: .3rem; }
+  .mode-btn {
+    border-radius: 999px;
+    border: 1px solid var(--panel-border);
+    background: transparent;
+    color: var(--text-dim);
+    font: inherit;
+    font-size: .72rem;
+    font-weight: 700;
+    white-space: nowrap;
+    padding: .4rem .7rem;
+    cursor: pointer;
+  }
+  .mode-btn[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .mode-btn:disabled { opacity: .45; cursor: not-allowed; }
+  .kind-tag {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    font-size: .62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    padding: .1rem .4rem;
+    border-radius: 999px;
+    margin-right: .3rem;
+    vertical-align: middle;
+  }
+  #caption-amends-chip { margin-left: .3rem; }
+  /* amend:end */
+
   #heart-layer { position: fixed; inset: 0; z-index: 6; pointer-events: none; overflow: hidden; }
   .heart-burst {
     position: absolute;
@@ -695,6 +728,9 @@
           <span id="caption-name"></span>
           <span id="caption-karma-badge">&#9733; <span id="caption-karma"></span></span>:
           <span id="caption-text"></span>
+          <!-- amend:start -->
+          <span id="caption-amends-chip" class="kind-tag" hidden></span>
+          <!-- amend:end -->
         </span>
       </div>
       <!-- pitch:start -->
@@ -766,6 +802,13 @@
     </div>
     <div class="you-chip" id="you-chip" hidden>you <span class="q-karma">&#9733; <span id="you-karma">0</span></span></div>
     <form id="say-form">
+      <!-- amend:start -->
+      <div class="amend-toggle" role="group" aria-label="Contribution mode">
+        <button type="button" id="mode-new-btn" class="mode-btn" aria-pressed="true">new scene</button>
+        <button type="button" id="mode-amend-btn" class="mode-btn" aria-pressed="false" disabled
+          title="Nothing is on air to change yet">change this scene</button>
+      </div>
+      <!-- amend:end -->
       <label for="say-input" class="sr-only" style="position:absolute;left:-9999px;">
         What should happen next
       </label>
@@ -888,6 +931,7 @@
     const captionKarma = document.getElementById("caption-karma");
     const captionKarmaBadge = document.getElementById("caption-karma-badge");
     const captionText = document.getElementById("caption-text");
+    const captionAmendsChip = document.getElementById("caption-amends-chip"); // amend
     const viewerCount = document.getElementById("viewer-count");
     const muteBtn = document.getElementById("mute-btn");
     const interfaceBtn = document.getElementById("interface-btn");
@@ -1190,6 +1234,33 @@
       if (await likeCurrentScene()) spawnHeart(event.clientX, event.clientY);
     });
 
+    // amend:start — "Yes, and": a two-state toggle for whether Say sends a new scene or a change
+    // to the one on air. Self-contained; postIdea (below) reads sayKind when it sends.
+    const modeNewBtn = document.getElementById("mode-new-btn");
+    const modeAmendBtn = document.getElementById("mode-amend-btn");
+    let sayKind = "new";
+    function setSayKind(kind) {
+      sayKind = kind;
+      modeNewBtn.setAttribute("aria-pressed", String(kind === "new"));
+      modeAmendBtn.setAttribute("aria-pressed", String(kind === "amend"));
+      sayInput.placeholder = kind === "amend"
+        ? "Change one thing about what's on screen…"
+        : "What should happen next…";
+    }
+    modeNewBtn.addEventListener("click", () => setSayKind("new"));
+    modeAmendBtn.addEventListener("click", () => setSayKind("amend"));
+    // Amending needs a scene on air to target; falls back to "new scene" if its target disappears
+    // (the scene ended) while the toggle was still set to amend.
+    function renderAmendToggle(now) {
+      const canAmend = Boolean(now);
+      modeAmendBtn.disabled = !canAmend;
+      modeAmendBtn.title = canAmend
+        ? "Change one thing about the scene on air"
+        : "Nothing is on air to change yet";
+      if (!canAmend && sayKind === "amend") setSayKind("new");
+    }
+    // amend:end
+
     // ---------- posting ideas ----------
     function showToast(message) {
       const toast = h("div", "toast", message);
@@ -1220,7 +1291,7 @@
     }
     async function postIdea(name, text) {
       setSaying(true);
-      const { status, data } = await postJSONSafe("say", { uid, name, text, source: "web" });
+      const { status, data } = await postJSONSafe("say", { uid, name, text, source: "web", kind: sayKind });
       setSaying(false);
       if (status === 200) {
         sayInput.value = "";
@@ -1355,8 +1426,12 @@
     function renderQueueItem(item, el) {
       if (!el) {
         el = h("div", "queue-item");
-        el.append(h("span", "q-name"), h("span", "q-karma"), h("p", "q-text"));
+        // amend: kind-tag is empty/hidden for a "new" idea, "change" for an amend.
+        el.append(h("span", "kind-tag"), h("span", "q-name"), h("span", "q-karma"), h("p", "q-text"));
       }
+      const tag = el.querySelector(".kind-tag");
+      tag.textContent = "change";
+      tag.hidden = item.kind !== "amend";
       el.querySelector(".q-name").textContent = item.name;
       el.querySelector(".q-karma").textContent = `★ ${item.karma}`;
       el.querySelector(".q-text").textContent = item.text;
@@ -1442,6 +1517,13 @@
       captionName.textContent = now.name;
       captionKarma.textContent = String(now.karma);
       captionText.textContent = now.text;
+      // amend:start
+      const amendCount = now.amends ? now.amends.length : 0;
+      captionAmendsChip.hidden = amendCount === 0;
+      if (amendCount > 0) {
+        captionAmendsChip.textContent = `+${amendCount} ${amendCount === 1 ? "change" : "changes"}`;
+      }
+      // amend:end
     }
     function popCaptionKarma() {
       const pop = h("span", "karma-pop", "+1 ★");
@@ -1469,10 +1551,16 @@
         steeringBody.appendChild(h("p", "steer-hint", "Nothing steering yet."));
         return;
       }
-      steeringBody.appendChild(h("p", "q-name", steering.name));
+      // amend: an amend targets the scene already on air, so it reads as "change:", not a new name.
+      const isAmend = steering.kind === "amend";
+      const nameLine = h("p", "q-name");
+      if (isAmend) nameLine.appendChild(h("span", "kind-tag", "change:"));
+      nameLine.appendChild(document.createTextNode(steering.name));
+      steeringBody.appendChild(nameLine);
       steeringBody.appendChild(h("p", "q-text", steering.text));
       steeringBody.appendChild(h("p", "steer-hint", "~20 s to screen"));
-      steeringStripText.textContent = `Steering now: ${steering.name} — ${steering.text} (~20 s to screen)`;
+      const label = isAmend ? "Change" : "Steering now";
+      steeringStripText.textContent = `${label}: ${steering.name} — ${steering.text} (~20 s to screen)`;
     }
     function renderStatus(status) {
       const previousNow = lastNow;
@@ -1482,6 +1570,7 @@
       renderLivePill(statusLive);
       diffLikesAndKarma(previousNow, status.now);
       renderCaption(status.now);
+      renderAmendToggle(status.now); // amend
       renderLikeButton();
       renderPitchBadge(status.pitch); // pitch
       viewerCount.textContent = `${status.viewers} watching`;
