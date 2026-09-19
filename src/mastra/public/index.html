@@ -65,16 +65,20 @@
     z-index: 0;
     background: radial-gradient(ellipse at 50% 40%, #1a1a1e 0%, #050505 70%);
   }
-  #backdrop-video {
+  #backdrop-video, #backdrop-canvas {
     position: fixed;
     inset: 0;
     z-index: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
-    filter: blur(60px) brightness(.45);
     transform: scale(1.2);
   }
+  #backdrop-video { filter: blur(60px) brightness(.45); }
+  /* Phones blur a 32x18 snapshot instead of the live stream (see attachBackdrop). A bitmap that
+     small is already smooth once stretched over the viewport, so blur(12px) here reads like the
+     video's blur(60px). Measured at 390x844: live video 30fps/p50 33.3ms, snapshot 120fps/8.3ms. */
+  #backdrop-canvas { filter: blur(12px) brightness(.45); }
 
   #video-wrap { position: fixed; inset: 0; background: #000; z-index: 1; }
   #subscriber-container { position: relative; width: 100%; height: 100%; overflow: hidden; }
@@ -1158,6 +1162,7 @@
        readable from the subscriber's own video element. -->
   <div id="backdrop-fallback" aria-hidden="true"></div>
   <video id="backdrop-video" muted playsinline aria-hidden="true" hidden></video>
+  <canvas id="backdrop-canvas" width="32" height="18" aria-hidden="true" hidden></canvas>
 
   <!-- video-stage wraps the video box and every overlay pinned to it. On desktop these stay
        position:fixed (viewport-relative, so nesting here changes nothing); on mobile they switch
@@ -1476,6 +1481,7 @@
 
     // --- DOM refs ---
     const backdropVideo = document.getElementById("backdrop-video");
+    const backdropCanvas = document.getElementById("backdrop-canvas");
     const videoWrap = document.getElementById("video-wrap");
     const subscriberContainer = document.getElementById("subscriber-container");
     const offairCard = document.getElementById("offair-card");
@@ -2571,8 +2577,39 @@
     // ---------- ambient backdrop: same MediaStream as the subscriber's <video>, heavily
     // blurred via CSS. Never a second Vonage subscription — just reads the existing element. ----------
     const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+    // Phones (portrait, and landscape phones, which can be wider than 820px) repaint a 32x18
+    // snapshot of the picture twice a second instead of filtering the live stream. Measured at
+    // 390x844: the live blurred <video> runs at 30fps / p50 33.3ms, the snapshot at 120fps /
+    // p50 8.3ms — the same as dropping the backdrop entirely. Lowering the blur radius does not
+    // help (blur(20px) also measured 30fps): the cost is filtering a texture that moves, not the
+    // radius. Desktop is left on the live video path below.
+    const phoneBackdrop = matchMedia("(max-width: 820px), (max-height: 500px) and (orientation: landscape)");
+    const BACKDROP_SNAPSHOT_MS = 500;
+    let backdropPainter = null;
+    function paintBackdropSnapshot() {
+      if (document.hidden) return;
+      const video = subscriberContainer.querySelector("video");
+      if (!video || !video.videoWidth) return;
+      backdropCanvas.getContext("2d")
+        .drawImage(video, 0, 0, backdropCanvas.width, backdropCanvas.height);
+      backdropCanvas.hidden = false;
+    }
+    function startBackdropSnapshots() {
+      if (backdropPainter) return;
+      paintBackdropSnapshot();
+      backdropPainter = setInterval(paintBackdropSnapshot, BACKDROP_SNAPSHOT_MS);
+    }
+    function stopBackdropSnapshots() {
+      clearInterval(backdropPainter);
+      backdropPainter = null;
+      backdropCanvas.hidden = true;
+    }
     function attachBackdrop() {
       if (reduceMotion.matches) return; // static #backdrop-fallback gradient stays instead
+      if (phoneBackdrop.matches) {
+        startBackdropSnapshots();
+        return;
+      }
       try {
         const video = subscriberContainer.querySelector("video");
         const stream = video && video.srcObject;
@@ -2587,9 +2624,17 @@
       }
     }
     function clearBackdrop() {
+      stopBackdropSnapshots();
       backdropVideo.hidden = true;
       backdropVideo.srcObject = null;
     }
+    // Rotating a phone crosses 820px, which would otherwise hand a phone the desktop live-video
+    // backdrop in landscape — the expensive path, on the weakest GPU.
+    phoneBackdrop.addEventListener("change", () => {
+      if (!hasStream) return;
+      clearBackdrop();
+      attachBackdrop();
+    });
 
     // ---------- Vonage subscribe-only session, with backoff reconnect ----------
     let reconnectDelay = 1000;
