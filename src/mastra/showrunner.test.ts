@@ -4,6 +4,7 @@ import {
   MAX_AD_READ_WORDS,
   MAX_VOICE_OVER_WORDS,
   narrator,
+  normalizeForModeration,
   pitchWriter,
   spokenText,
   stripUrlLike,
@@ -33,6 +34,22 @@ describe("spokenText", () => {
 
   it("returns an empty string for a blank answer", () => {
     expect(spokenText("   \n  ")).toBe("");
+  });
+});
+
+describe("normalizeForModeration", () => {
+  it("folds a fullwidth homoglyph name to its plain ASCII form", () => {
+    expect(normalizeForModeration("Ｅlon Musk")).toBe("Elon Musk");
+  });
+
+  it("leaves ordinary ASCII text unchanged", () => {
+    const text = "a rubber duck runs a midnight laundrette";
+    expect(normalizeForModeration(text)).toBe(text);
+  });
+
+  it("leaves legitimate numbers and units alone (no leetspeak folding)", () => {
+    const text = "a 1980s VHS broadcast in 4K";
+    expect(normalizeForModeration(text)).toBe(text);
   });
 });
 
