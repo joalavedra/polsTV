@@ -468,7 +468,9 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    transform: translateY(100%);
+    /* The sheet is anchored above the input bar, so 100% alone left its tab row peeking out from
+       behind the translucent bar. Push it the bar's height further. */
+    transform: translateY(calc(100% + var(--inputbar-h)));
     transition: transform .25s ease;
   }
   body.sheet-open #panel { transform: translateY(0); }
@@ -1323,7 +1325,9 @@
     <span class="mic-wrap">
       <button type="button" id="mic-btn" aria-label="Hold to speak your idea"
         aria-pressed="false" hidden>
-        <span aria-hidden="true">&#127908;</span>
+        <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/>
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
       </button>
       <span id="mic-status" aria-hidden="true" hidden></span>
     </span>
