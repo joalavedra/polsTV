@@ -82,12 +82,14 @@ export class PitchSlot {
       return {
         ok: false,
         code: "karma",
-        reason: `The pitch needs ${PITCH_MIN_KARMA} karma. You have ${input.karma}, ${short} to go.`,
+        reason:
+          `The pitch needs ${PITCH_MIN_KARMA} karma. You have ${input.karma}, ${short} to go.`,
       };
     }
     const cooldown = this.cooldownSeconds(input.uid);
     if (cooldown > 0) {
-      return { ok: false, code: "cooldown", reason: `One pitch every 3 minutes: ${cooldown}s left.` };
+      const reason = `One pitch every 3 minutes: ${cooldown}s left.`;
+      return { ok: false, code: "cooldown", reason };
     }
     if (this.current && this.current.state !== "dropped") {
       return {
@@ -159,7 +161,7 @@ export class PitchSlot {
     this.dropped.push({ ...pitch });
   }
 
-  /** One pitch that was dropped since the last call, so the caller can tell whoever submitted it. */
+  /** A pitch dropped since the last call, so the caller can tell whoever submitted it. */
   takeDropped(): Pitch | undefined {
     return this.dropped.shift();
   }

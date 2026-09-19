@@ -27,9 +27,8 @@ afterEach(() => {
 
 describe("spokenText", () => {
   it("strips the quotes, markdown and stage directions a model wraps a line in", () => {
-    expect(spokenText('  "In a kitchen\n that time *forgot*, (warmly) one capybara stirs."  ')).toBe(
-      "In a kitchen that time forgot, one capybara stirs.",
-    );
+    const raw = '  "In a kitchen\n that time *forgot*, (warmly) one capybara stirs."  ';
+    expect(spokenText(raw)).toBe("In a kitchen that time forgot, one capybara stirs.");
   });
 
   it("returns an empty string for a blank answer", () => {
@@ -87,7 +86,7 @@ describe("writeVoiceOver", () => {
     expect(usage).toEqual({ inputTokens: 40, outputTokens: 20 });
   });
 
-  it("falls back to the plain read when the narrator fails, and charges nothing for it", async () => {
+  it("falls back to the plain read when the narrator fails, charging nothing", async () => {
     vi.spyOn(narrator, "generate").mockRejectedValue(new Error("nebius down"));
     const { line, usage } = await writeVoiceOver("Ana", "a cat on a boat");
     expect(line).toBe("Up next, from Ana: a cat on a boat");

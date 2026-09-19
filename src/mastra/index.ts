@@ -120,8 +120,10 @@ function sweepPitches(): void {
   }
 }
 
+type BroadcasterPitch = { pitch: { pitchId: number; name: string; url: string } };
+
 /** The pitch waiting for the air, handed to the broadcaster exactly once. */
-function pitchForBroadcaster(): { pitch: { pitchId: number; name: string; url: string } } | undefined {
+function pitchForBroadcaster(): BroadcasterPitch | undefined {
   const pitch = pitchSlot.take();
   if (!pitch?.url) return undefined;
   return { pitch: { pitchId: pitch.id, name: pitch.name, url: pitch.url } };

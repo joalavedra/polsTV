@@ -13,13 +13,13 @@ import type { TokenUsage } from "./spend";
 export const MAX_IDEA_CHARS = 280;
 export const MAX_PITCH_BRIEF_CHARS = 140;
 
-/** Words the narrator gets after the "From <name>." credit. The clip must end before the next steer. */
+/** Words the narrator gets after the "From <name>." credit: the clip ends before the next steer. */
 export const MAX_VOICE_OVER_WORDS = 22;
 
 /** Words an ad read gets after the "A word from <name>." credit. */
 export const MAX_AD_READ_WORDS = 35;
 
-/** A narrator line that arrives after this is worthless: the scene it was written for is already up. */
+/** A narrator line arriving after this is worthless: its scene is already on its way up. */
 const NARRATOR_TIMEOUT_MS = 4_000;
 
 const verdictSchema = z.object({
@@ -251,8 +251,8 @@ function afterTimeout(ms: number, what: string): Promise<never> {
 /**
  * The in-world line the channel's voice reads over the scene a steer is about to bring up. Runs
  * beside writeSteer() and must never outlast it: on timeout, failure or an empty line this falls
- * back to the plain "Up next, from …" read and logs why. A timed-out call's tokens go unrecorded —
- * the spend ledger is an estimate, and the alternative is holding the steer for a dead request.
+ * back to the plain "Up next, from …" read and logs why. A timed-out call's tokens go
+ * unrecorded — the ledger is an estimate, and the alternative is holding the steer for a dead call.
  */
 export async function writeVoiceOver(name: string, idea: string): Promise<SpokenLineOutcome> {
   try {
@@ -286,7 +286,7 @@ export async function moderatePitch(brief: string, name: string): Promise<Modera
   return { verdict, usage: nebiusUsage(result.usage, "pitch moderator") };
 }
 
-/** Write the sponsored read for an already-moderated brief. Throws when the model returns nothing. */
+/** Write the sponsored read for a moderated brief. Throws when the model returns nothing. */
 export async function writeAdRead(name: string, brief: string): Promise<SpokenLineOutcome> {
   const result = await pitchWriter.generate(`<brief>${brief}</brief>`);
   const body = capWords(stripUrlLike(spokenText(result.text)), MAX_AD_READ_WORDS);
