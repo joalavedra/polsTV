@@ -402,40 +402,54 @@
     letter-spacing: .1em;
     text-transform: uppercase;
     color: var(--accent);
-    margin: 0 0 .75rem;
+    margin: 0 0 .5rem;
   }
-  #rail section + section { margin-top: 1.25rem; }
+  #rail section + section { margin-top: .65rem; }
   #rail h2 {
-    font-size: .75rem;
+    font-size: .68rem;
     letter-spacing: .08em;
     text-transform: uppercase;
     color: var(--text-dim);
-    margin: 0 0 .5rem;
+    margin: 0 0 .35rem;
   }
   #steering-body {
     background: rgba(255, 71, 66, .14);
     border: 1px solid rgba(255, 71, 66, .35);
     border-radius: 12px;
-    padding: .6rem .75rem;
+    padding: .5rem .65rem;
   }
-  .steer-hint { font-size: .75rem; color: var(--text-dim); margin: .25rem 0 0; }
+  #steering-body .q-text {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .steer-hint { font-size: .72rem; color: var(--text-dim); margin: .2rem 0 0; }
   .q-avatar {
     display: none;
-    width: 26px;
-    height: 26px;
-    min-width: 26px;
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
     border-radius: 50%;
     align-items: center;
     justify-content: center;
     font-weight: 700;
-    font-size: .72rem;
+    font-size: .68rem;
     color: #14141c;
     margin-right: .4rem;
     vertical-align: middle;
   }
+  #rail-queue { display: flex; flex-direction: column; gap: .4rem; }
+  #rail-queue .queue-item { padding: .4rem .55rem; }
   #rail-queue .q-avatar { display: inline-flex; }
   #rail-queue .queue-item { display: flex; align-items: flex-start; }
   #rail-queue .queue-item > div { flex: 1; min-width: 0; }
+  #rail-queue .q-text {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
 
   /* ---------- Panel: chat/queue/rank. A bottom sheet on mobile/landscape, a persistent
      full-height side column on desktop (styled further in the desktop block below). ---------- */
@@ -1062,12 +1076,18 @@
     /* TikTok-style comment rows instead of coloured bubbles. */
     .chat-bubble { background: none !important; padding: 0; color: var(--text); display: flex; gap: .55rem; }
     .chat-bubble::before {
-      content: "";
+      content: attr(data-initial);
       flex: none;
       width: 28px;
       height: 28px;
       border-radius: 50%;
       background: var(--chat-avatar-bg, rgba(255, 255, 255, .25));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: .72rem;
+      font-weight: 700;
+      color: #14141c;
       margin-top: .1rem;
     }
     .chat-meta { font-size: .78rem; }
@@ -1095,6 +1115,9 @@
     #action-rail { right: calc(var(--side-col-w) + 12px); bottom: 24px; }
     body.chrome-hidden #action-rail { right: 24px; }
     #spend-popover, #share-popover { right: calc(var(--side-col-w) + 12px + var(--rail-btn) + 12px); }
+    /* The rail overlays the stage here (unlike the wide band, which reserves space beside it),
+       so the caption needs its wider clearance back to stay clear of the rail's buttons. */
+    #stage-caption { padding-right: 88px; }
   }
 </style>
 </head>
@@ -1130,7 +1153,12 @@
         <p id="stage-caption-text"></p>
         <!-- pitch:start -->
         <p id="stage-caption-voice" hidden>
-          <span aria-hidden="true">&#128266;</span> <span id="stage-caption-voice-text"></span>
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 9v6h4l5 4V5L8 9H4z"></path>
+            <path d="M16.5 8.5a5 5 0 010 7"></path>
+          </svg>
+          <span id="stage-caption-voice-text"></span>
         </p>
         <!-- pitch:end -->
       </div>
@@ -1168,12 +1196,23 @@
         <span id="like-own-label" class="rail-label" hidden>your scene</span>
       </button>
       <button type="button" class="rail-item" id="chat-count-btn" aria-controls="panel">
-        <span class="rail-icon" aria-hidden="true">&#128172;</span>
+        <span class="rail-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 4h16v12H9l-5 4V4z"></path>
+          </svg>
+        </span>
         <span class="rail-label" id="chat-count-label">0</span>
       </button>
       <!-- pitch:start -->
       <button type="button" class="rail-item" id="pitch-btn">
-        <span class="rail-icon" aria-hidden="true">&#128226;</span>
+        <span class="rail-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 10v4h3l7 4V6l-7 4H3z"></path>
+            <path d="M17 9a3.2 3.2 0 010 6"></path>
+          </svg>
+        </span>
         <span class="rail-label" id="pitch-btn-label">pitch</span>
       </button>
       <!-- pitch:end -->
@@ -2266,7 +2305,10 @@
         meta.append(h("span", "chat-name"), h("span", "chat-karma"), h("span", "chat-time"));
         el.append(meta, h("p", "chat-text"));
       }
-      el.style.background = `hsl(${hashHue(item.name)}, 85%, 85%)`;
+      const tint = `hsl(${hashHue(item.name)}, 85%, 85%)`;
+      el.style.background = tint; // mobile bubble; desktop instead tints ::before (--chat-avatar-bg)
+      el.style.setProperty("--chat-avatar-bg", tint);
+      el.dataset.initial = (item.name || "?").charAt(0).toUpperCase(); // desktop avatar ::before
       el.querySelector(".chat-name").textContent = item.name;
       el.querySelector(".chat-karma").textContent = `★${item.karma}`;
       el.querySelector(".chat-time").textContent = formatTime(item.at);
