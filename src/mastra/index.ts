@@ -8,8 +8,18 @@ import { Mastra } from "@mastra/core/mastra";
 import { registerApiRoute } from "@mastra/core/server";
 import { z } from "zod";
 import { announcerLine, clip, synthesise } from "./announcer";
+import type { Idea } from "./channel";
 import { channel } from "./channel";
-import { MAX_IDEA_CHARS, moderate, moderator, sceneWriter, writeSteer } from "./showrunner";
+import type { SteerWriteOutcome } from "./showrunner";
+import {
+  amendWriter,
+  MAX_IDEA_CHARS,
+  moderate,
+  moderator,
+  sceneWriter,
+  writeAmend,
+  writeSteer,
+} from "./showrunner";
 import { spend } from "./spend";
 import { notifySceneChange, showrunner } from "./telegram";
 import { videoAccess } from "./vonage";
@@ -47,6 +57,7 @@ const sayBody = z.object({
   name: z.string().trim().min(1).max(24),
   text: z.string().trim().min(1).max(MAX_IDEA_CHARS),
   source: z.enum(["web", "voice"]).default("web"),
+  kind: z.enum(["new", "amend"]).default("new"),
 });
 const likeBody = z.object({ uid });
 const steerResultBody = z.object({
@@ -113,8 +124,29 @@ function sayTooSoon(client: string): boolean {
   return false;
 }
 
+/** The next candidate to steer, dropping any amend whose target scene has already moved on or is
+ * full up on changes — "Yes, and" only ever touches the scene it was written for. */
+function nextSteerableIdea(): Idea | undefined {
+  let idea = channel.nextIdea();
+  while (idea && channel.isStaleAmend(idea)) {
+    channel.dropIdea(idea.id);
+    spend.markNotAired(idea.id);
+    idea = channel.nextIdea();
+  }
+  return idea;
+}
+
+/** New ideas transition from the current scene; amends restate it and change one thing. */
+async function writeForIdea(idea: Idea, currentPrompt: string | undefined): Promise<SteerWriteOutcome> {
+  if (idea.kind === "new") return writeSteer(currentPrompt, idea.text);
+  if (currentPrompt === undefined) {
+    throw new Error(`amend idea ${idea.id} has no scene on air to amend`);
+  }
+  return writeAmend(currentPrompt, idea.text);
+}
+
 export const mastra = new Mastra({
-  agents: { moderator, sceneWriter, showrunner },
+  agents: { moderator, sceneWriter, amendWriter, showrunner },
   // Channels (Telegram) need storage on the Mastra instance or subscriptions, dedup and approvals
   // reset on every restart. Also backs the showrunner's per-user memory (docs/cards/mastra-nebius).
   storage: new LibSQLStore({ id: "mastra-storage", url: "file:./mastra.db" }),
@@ -248,20 +280,23 @@ export const mastra = new Mastra({
           accrueHeartbeat(c.req.query("director") === "1");
           const pending = channel.pendingSteer();
           if (pending) return c.json(pending);
-          const idea = channel.nextIdea();
+          const idea = nextSteerableIdea();
           if (!idea || !channel.canSteer() || writingSteer) return c.body(null, 204);
           writingSteer = true;
           try {
-            // The announcer is garnish: a TTS failure is logged and the steer goes out without it.
+            // An amend is a small on-screen tweak: no spoken "up next" clip for it, and the
+            // announcer is garnish anyway — a TTS failure is logged and the steer goes out without it.
             const [steerWrite, announcer] = await Promise.all([
-              writeSteer(channel.status().now?.prompt, idea.text),
-              synthesise(`steer-${idea.id}`, announcerLine(idea.name, idea.text))
-                // Page-relative, so it still resolves when the app is served under a path prefix.
-                .then((clipId) => ({ clipId, url: `announcer/${clipId}` }))
-                .catch((error: unknown) => {
-                  console.error(`announcer failed for idea ${idea.id}, steering without it:`, error);
-                  return undefined;
-                }),
+              writeForIdea(idea, channel.status().now?.prompt),
+              idea.kind === "amend"
+                ? Promise.resolve(undefined)
+                : synthesise(`steer-${idea.id}`, announcerLine(idea.name, idea.text))
+                    // Page-relative, so it still resolves when the app is served under a path prefix.
+                    .then((clipId) => ({ clipId, url: `announcer/${clipId}` }))
+                    .catch((error: unknown) => {
+                      console.error(`announcer failed for idea ${idea.id}, steering without it:`, error);
+                      return undefined;
+                    }),
             ]);
             spend.recordSteerWrite(idea.id, idea.name, idea.text, steerWrite.usage);
             if (announcer) {
@@ -293,14 +328,16 @@ export const mastra = new Mastra({
           if (!body.success) return c.json({ ok: false }, 400);
           if (!body.data.applied) console.warn("director rejected a steer:", body.data.reason);
           // Captured before resolving: on rejection resolveSteer's result carries no ideaId, but
-          // the ledger needs one to move the idea's cost into notAired instead of a scene.
+          // the ledger needs one to move the idea's cost into notAired instead of a scene. Also
+          // the right id for an applied amend: its own (pendingBefore.ideaId), not the scene it
+          // amended (onAir.ideaId) — that's where recordSteerWrite filed its cost.
           const pendingBefore = channel.pendingSteer();
-          const { onAir, ended } = channel.resolveSteer(body.data.steerId, body.data.applied);
+          const { onAir, ended, amended } = channel.resolveSteer(body.data.steerId, body.data.applied);
           if (pendingBefore?.steerId === body.data.steerId) {
-            if (onAir) spend.markAired(onAir.ideaId, onAir.name, onAir.text);
+            if (onAir) spend.markAired(pendingBefore.ideaId, onAir.name, onAir.text);
             else spend.markNotAired(pendingBefore.ideaId);
           }
-          void notifySceneChange({ onAir, ended });
+          void notifySceneChange({ onAir, ended, amended });
           return c.json({ ok: true, onAir: onAir?.ideaId ?? null });
         },
       }),
