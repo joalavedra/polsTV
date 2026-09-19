@@ -10,6 +10,7 @@ import { z } from "zod";
 import { announcerLine, clip, synthesise } from "./announcer";
 import { channel } from "./channel";
 import { MAX_IDEA_CHARS, moderate, moderator, sceneWriter, writeSteer } from "./showrunner";
+import { spend } from "./spend";
 import { notifySceneChange, showrunner } from "./telegram";
 import { videoAccess } from "./vonage";
 
@@ -19,6 +20,25 @@ if (!broadcasterSecret || broadcasterSecret.length < 32) {
 }
 
 let writingSteer = false;
+
+// The broadcaster's next-steer poll doubles as its heartbeat (docs/CONTRACT.md); this tracks the
+// wall-clock gap between polls so spend.ts can turn it into fal/Vonage seconds without owning a
+// clock itself. undefined until the first poll, so server boot never bills a huge bogus first gap.
+let lastHeartbeatAt: number | undefined;
+
+/** Bill fal (only while Director is open) and Vonage (always) for the time since the last poll. */
+function accrueHeartbeat(directorOpen: boolean): void {
+  const now = Date.now();
+  const elapsedMs = lastHeartbeatAt === undefined ? 0 : now - lastHeartbeatAt;
+  lastHeartbeatAt = now;
+  const status = channel.status();
+  spend.accrueHeartbeat({
+    elapsedMs,
+    directorOpen,
+    target: status.now?.ideaId ?? "idle",
+    participants: status.viewers + 1, // + the broadcaster's own publisher connection
+  });
+}
 
 // Web callers may not claim a "telegram:" uid; those only come from the Telegram channel.
 const uid = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);
@@ -152,6 +172,14 @@ export const mastra = new Mastra({
         },
       }),
 
+      // Not under /status: that route is polled every second by every viewer, and the spend pill
+      // only needs a few-second cadence (docs/CONTRACT.md).
+      registerApiRoute("/spend", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => c.json(spend.snapshot()),
+      }),
+
       registerApiRoute("/say", {
         method: "POST",
         requiresAuth: false,
@@ -163,16 +191,24 @@ export const mastra = new Mastra({
           if (client && sayTooSoon(client)) {
             return c.json({ ok: false, reason: "Slow down a little." }, 429);
           }
-          let verdict;
+          let verdict, usage;
           try {
-            verdict = await moderate(body.data.text, body.data.name);
+            ({ verdict, usage } = await moderate(body.data.text, body.data.name));
           } catch (error) {
             console.error("moderation failed, idea not queued:", error);
             return c.json({ ok: false, reason: "Moderation is unavailable, try again." }, 503);
           }
-          if (!verdict.ok) return c.json(verdict, 422);
+          if (!verdict.ok) {
+            spend.recordModeration("rejected", body.data.name, body.data.text, usage);
+            return c.json(verdict, 422);
+          }
           const added = channel.addIdea(body.data);
-          return added.ok ? c.json({ ok: true, id: added.idea.id }) : c.json(added, 409);
+          if (!added.ok) {
+            spend.recordModeration("rejected", body.data.name, body.data.text, usage);
+            return c.json(added, 409);
+          }
+          spend.recordModeration(added.idea.id, added.idea.name, added.idea.text, usage);
+          return c.json({ ok: true, id: added.idea.id });
         },
       }),
 
@@ -207,6 +243,9 @@ export const mastra = new Mastra({
         handler: async (c) => {
           if (!isBroadcaster(c.req.param("secret"))) return c.notFound();
           channel.sawBroadcaster();
+          // ?director=1 while a Director session is open (broadcaster.html); this poll is also the
+          // broadcaster's heartbeat, so bill it every time regardless of what it returns below.
+          accrueHeartbeat(c.req.query("director") === "1");
           const pending = channel.pendingSteer();
           if (pending) return c.json(pending);
           const idea = channel.nextIdea();
@@ -214,17 +253,21 @@ export const mastra = new Mastra({
           writingSteer = true;
           try {
             // The announcer is garnish: a TTS failure is logged and the steer goes out without it.
-            const [prompt, announcerUrl] = await Promise.all([
+            const [steerWrite, announcer] = await Promise.all([
               writeSteer(channel.status().now?.prompt, idea.text),
               synthesise(`steer-${idea.id}`, announcerLine(idea.name, idea.text))
                 // Page-relative, so it still resolves when the app is served under a path prefix.
-                .then((clipId) => `announcer/${clipId}`)
+                .then((clipId) => ({ clipId, url: `announcer/${clipId}` }))
                 .catch((error: unknown) => {
                   console.error(`announcer failed for idea ${idea.id}, steering without it:`, error);
                   return undefined;
                 }),
             ]);
-            return c.json(channel.beginSteer(idea.id, prompt, announcerUrl));
+            spend.recordSteerWrite(idea.id, idea.name, idea.text, steerWrite.usage);
+            if (announcer) {
+              spend.recordTts(idea.id, idea.name, idea.text, clip(announcer.clipId)?.length ?? 0);
+            }
+            return c.json(channel.beginSteer(idea.id, steerWrite.prompt, announcer?.url));
           } finally {
             writingSteer = false;
           }
@@ -249,7 +292,14 @@ export const mastra = new Mastra({
           const body = steerResultBody.safeParse(await c.req.json().catch(() => null));
           if (!body.success) return c.json({ ok: false }, 400);
           if (!body.data.applied) console.warn("director rejected a steer:", body.data.reason);
+          // Captured before resolving: on rejection resolveSteer's result carries no ideaId, but
+          // the ledger needs one to move the idea's cost into notAired instead of a scene.
+          const pendingBefore = channel.pendingSteer();
           const { onAir, ended } = channel.resolveSteer(body.data.steerId, body.data.applied);
+          if (pendingBefore?.steerId === body.data.steerId) {
+            if (onAir) spend.markAired(onAir.ideaId, onAir.name, onAir.text);
+            else spend.markNotAired(pendingBefore.ideaId);
+          }
           void notifySceneChange({ onAir, ended });
           return c.json({ ok: true, onAir: onAir?.ideaId ?? null });
         },

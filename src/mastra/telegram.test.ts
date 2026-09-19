@@ -26,10 +26,12 @@ function scene(overrides: Partial<Scene> = {}): Scene {
   };
 }
 
+const ZERO_USAGE = { inputTokens: 0, outputTokens: 0 };
+
 describe("submitIdeaLogic", () => {
   function deps(overrides: Partial<SubmitIdeaDeps> = {}): SubmitIdeaDeps {
     return {
-      moderate: vi.fn(async () => ({ ok: true, reason: "" })),
+      moderate: vi.fn(async () => ({ verdict: { ok: true, reason: "" }, usage: ZERO_USAGE })),
       addIdea: vi.fn(
         (): AddResult => ({
           ok: true,
@@ -37,6 +39,7 @@ describe("submitIdeaLogic", () => {
         }),
       ),
       queuePosition: vi.fn(() => 1),
+      recordModeration: vi.fn(),
       ...overrides,
     };
   }
@@ -53,11 +56,20 @@ describe("submitIdeaLogic", () => {
     });
   });
 
+  it("meters an approved idea's moderation cost against its queued idea id", async () => {
+    const d = deps();
+    await submitIdeaLogic(d, "telegram:1", "Ana", "a cat");
+    expect(d.recordModeration).toHaveBeenCalledWith(1, "Ana", "x", ZERO_USAGE);
+  });
+
   it("reports the moderator's reason when an idea is rejected", async () => {
-    const d = deps({ moderate: vi.fn(async () => ({ ok: false, reason: "no real people" })) });
+    const usage = { inputTokens: 12, outputTokens: 3 };
+    const verdict = { ok: false, reason: "no real people" };
+    const d = deps({ moderate: vi.fn(async () => ({ verdict, usage })) });
     const result = await submitIdeaLogic(d, "telegram:1", "Ana", "a real celebrity");
     expect(result).toEqual({ queued: false, reason: "no real people" });
     expect(d.addIdea).not.toHaveBeenCalled();
+    expect(d.recordModeration).toHaveBeenCalledWith("rejected", "Ana", "a real celebrity", usage);
   });
 
   it("reports the channel's reason when the user already has a queued idea", async () => {
@@ -65,6 +77,7 @@ describe("submitIdeaLogic", () => {
     const d = deps({ addIdea: vi.fn((): AddResult => ({ ok: false, reason: alreadyQueued })) });
     const result = await submitIdeaLogic(d, "telegram:1", "Ana", "a second idea");
     expect(result).toEqual({ queued: false, reason: alreadyQueued });
+    expect(d.recordModeration).toHaveBeenCalledWith("rejected", "Ana", "a second idea", ZERO_USAGE);
   });
 
   it("fails closed with a friendly reason when moderation throws", async () => {
@@ -74,6 +87,7 @@ describe("submitIdeaLogic", () => {
     expect(result.queued).toBe(false);
     expect(result.reason).toMatch(/unavailable/i);
     expect(consoleError).toHaveBeenCalled();
+    expect(d.recordModeration).not.toHaveBeenCalled();
     consoleError.mockRestore();
   });
 });
