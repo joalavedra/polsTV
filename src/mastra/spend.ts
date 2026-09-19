@@ -93,6 +93,10 @@ export interface SpendSnapshot {
   scenes: SceneSpend[];
   notAired: { usd: number };
   idle: { usd: number };
+  /** Sponsored voice-overs (pitch.ts). They play over whatever is on air, so they have no scene. */
+  pitches: { usd: number };
+  /** Nebius cost of ticker photo/caption moderation — never tied to a scene (see recordTicker) */
+  ticker: { usd: number };
 }
 
 function nebiusCost(usage: TokenUsage): number {
@@ -125,8 +129,9 @@ interface PendingIdea {
  * The channel's cost ledger. An idea's moderation, steer-writing and TTS cost is charged to the
  * `notAired` catch-all the instant it happens (pessimistic default); if the idea goes on to air,
  * `markAired` moves that cost out of `notAired` and into its scene. fal and Vonage time is charged
- * directly to whichever scene is on air, or to `idle` when nothing is. See spend.test.ts for the
- * accounting invariants (every dollar recorded lands in exactly one of: a scene, notAired, idle).
+ * directly to whichever scene is on air, or to `idle` when nothing is. A sponsored voice-over has
+ * no scene of its own, so its cost goes to `pitches`. See spend.test.ts for the accounting
+ * invariants (every dollar lands in exactly one of: a scene, notAired, idle, pitches, ticker).
  */
 export class SpendLedger {
   private fal = { usd: 0, seconds: 0 };
@@ -135,6 +140,8 @@ export class SpendLedger {
   private vonage = { usd: 0, participantMinutes: 0 };
   private notAiredUsd = 0;
   private idleUsd = 0;
+  private pitchesUsd = 0;
+  private tickerUsd = 0;
   private scenes: SceneSpend[] = [];
   private pending = new Map<number, PendingIdea>();
 
@@ -153,7 +160,10 @@ export class SpendLedger {
     if (target !== "rejected") this.chargePending(target, name, text, "nebius", usd);
   }
 
-  /** Charge one steer-writing call for an idea already picked to steer next. */
+  /**
+   * Charge one Nebius writing call — the steering prompt, or the narrator line read over it — to
+   * an idea already picked to steer next.
+   */
   recordSteerWrite(ideaId: number, name: string, text: string, usage: TokenUsage): void {
     const usd = this.chargeNebius(usage);
     this.notAiredUsd += usd;
@@ -162,11 +172,7 @@ export class SpendLedger {
 
   /** Charge one SLNG TTS clip. `audioBytes` is the mp3 byte length SLNG returned. */
   recordTts(ideaId: number, name: string, text: string, audioBytes: number): void {
-    const audioSeconds = audioBytes / SLNG_MP3_BYTES_PER_SECOND;
-    const usd = slngCost(audioSeconds);
-    this.slng.usd += usd;
-    this.slng.audioSeconds += audioSeconds;
-    this.slng.calls += 1;
+    const usd = this.chargeSlng(audioBytes);
     this.notAiredUsd += usd;
     this.chargePending(ideaId, name, text, "slng", usd);
   }
@@ -184,6 +190,26 @@ export class SpendLedger {
     this.slng.calls += 1;
     this.notAiredUsd += usd;
     if (target !== "rejected") this.chargePending(target, name, text, "slng", usd);
+  }
+
+  /** Charge one Nebius call for a sponsored voice-over: its moderation, or writing its ad read. */
+  recordPitchTokens(usage: TokenUsage): void {
+    this.pitchesUsd += this.chargeNebius(usage);
+  }
+
+  /** Charge one SLNG clip for a sponsored voice-over. */
+  recordPitchTts(audioBytes: number): void {
+    this.pitchesUsd += this.chargeSlng(audioBytes);
+  }
+
+  /**
+   * Charge one ticker Nebius call (image moderation or caption/name moderation). Ticker
+   * submissions are never tied to a queued idea, so this scene-less line — not `notAired`, which
+   * is idea-specific — is where all of it lands, whatever the verdict.
+   */
+  recordTicker(usage: TokenUsage): void {
+    const usd = this.chargeNebius(usage);
+    this.tickerUsd += usd;
   }
 
   /** Charge fal Director open-session seconds to the scene on air, or "idle" when none is. */
@@ -254,7 +280,18 @@ export class SpendLedger {
       scenes: this.scenes.map((scene) => ({ ...scene, byProvider: { ...scene.byProvider } })),
       notAired: { usd: this.notAiredUsd },
       idle: { usd: this.idleUsd },
+      pitches: { usd: this.pitchesUsd },
+      ticker: { usd: this.tickerUsd },
     };
+  }
+
+  private chargeSlng(audioBytes: number): number {
+    const audioSeconds = audioBytes / SLNG_MP3_BYTES_PER_SECOND;
+    const usd = slngCost(audioSeconds);
+    this.slng.usd += usd;
+    this.slng.audioSeconds += audioSeconds;
+    this.slng.calls += 1;
+    return usd;
   }
 
   private chargeNebius(usage: TokenUsage): number {
