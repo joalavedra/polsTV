@@ -293,6 +293,57 @@ describe("ticker bucket", () => {
   });
 });
 
+describe("concierge bucket", () => {
+  it("charges the concierge's STT, LLM and TTS to the scene-less concierge line", () => {
+    const ledger = new SpendLedger();
+    ledger.recordConciergeStt(30);
+    ledger.recordConciergeTokens({ inputTokens: 1_000_000, outputTokens: 0 });
+    ledger.recordConciergeTts(SLNG_MP3_BYTES_PER_SECOND * 60);
+    const snap = ledger.snapshot();
+    const expectedUsd =
+      (30 / 60) * (SLNG_STT_MICRODOLLARS_PER_AUDIO_MINUTE / 1_000_000) +
+      NEBIUS_INPUT_USD_PER_MILLION_TOKENS +
+      SLNG_MICRODOLLARS_PER_AUDIO_MINUTE / 1_000_000;
+    expect(snap.concierge.usd).toBeCloseTo(expectedUsd, 9);
+    expect(snap.notAired.usd).toBe(0);
+    expect(snap.scenes).toHaveLength(0);
+  });
+
+  it("keeps scene-less lines plus scenes summing to totalUsd once mixed with an aired scene", () => {
+    const ledger = new SpendLedger();
+    ledger.recordModeration(1, "Ana", "a cat", { inputTokens: 100, outputTokens: 50 });
+    ledger.markAired(1, "Ana", "a cat");
+    ledger.recordFal(1, 2);
+    ledger.recordConciergeTokens({ inputTokens: 200, outputTokens: 100 });
+    const snap = ledger.snapshot();
+    const scenesUsd = snap.scenes.reduce((sum, scene) => sum + scene.usd, 0);
+    expect(scenesUsd + snap.notAired.usd + snap.idle.usd + snap.concierge.usd).toBeCloseTo(
+      snap.totalUsd,
+      9,
+    );
+  });
+});
+
+describe("recordSceneTokens (recs.ts's post-hoc scene write)", () => {
+  it("attributes into the scene when it is still in the kept window", () => {
+    const ledger = new SpendLedger();
+    ledger.recordModeration(7, "Ana", "a cat", { inputTokens: 0, outputTokens: 0 });
+    ledger.markAired(7, "Ana", "a cat");
+    ledger.recordSceneTokens(7, { inputTokens: 1_000_000, outputTokens: 0 });
+    const scene = ledger.snapshot().scenes[0];
+    expect(scene?.byProvider.nebius).toBeCloseTo(NEBIUS_INPUT_USD_PER_MILLION_TOKENS, 9);
+    expect(scene?.usd).toBeCloseTo(NEBIUS_INPUT_USD_PER_MILLION_TOKENS, 9);
+  });
+
+  it("falls back to idle once the scene has scrolled out of the kept window", () => {
+    const ledger = new SpendLedger();
+    ledger.recordSceneTokens(999, { inputTokens: 1_000_000, outputTokens: 0 });
+    const snap = ledger.snapshot();
+    expect(snap.idle.usd).toBeCloseTo(NEBIUS_INPUT_USD_PER_MILLION_TOKENS, 9);
+    expect(snap.scenes).toHaveLength(0);
+  });
+});
+
 describe("zero and missing usage", () => {
   it("records zero-cost usage without error", () => {
     const ledger = new SpendLedger();
