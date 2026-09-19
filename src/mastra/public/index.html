@@ -1792,15 +1792,44 @@
     });
 
     // ---------- mute toggle ----------
+    // A browser PAUSES a video that is unmuted without a user gesture in this page load. First-time
+    // visitors tap the splash, so it worked for them; anyone reloading (splash already dismissed)
+    // got a frozen picture under a LIVE pill. Sound therefore waits for the first gesture, and the
+    // picture never does.
     let wantMuted = false;
+    let hasGesture = false;
     function applyMute() {
-      for (const video of subscriberContainer.querySelectorAll("video")) video.muted = wantMuted;
+      const muted = wantMuted || !hasGesture;
+      for (const video of subscriberContainer.querySelectorAll("video")) {
+        video.muted = muted;
+        if (video.paused) {
+          video.play().catch((error) => console.debug("subscriber play() refused:", error));
+        }
+      }
+      muteBtn.textContent = muted ? "unmute" : "mute";
+      muteBtn.setAttribute("aria-pressed", String(muted));
+    }
+    let soundUnlockedByMutePress = false;
+    function onFirstGesture(event) {
+      if (hasGesture) return;
+      hasGesture = true;
+      // If that first gesture is a press on the mute button itself, its click must not toggle the
+      // sound straight back off.
+      soundUnlockedByMutePress = muteBtn.contains(event.target);
+      applyMute();
+      try { OT.unblockAudio(); } catch { /* nothing blocked, or OT not ready yet */ }
+    }
+    for (const type of ["pointerdown", "keydown", "touchend"]) {
+      window.addEventListener(type, onFirstGesture, { capture: true, passive: true });
     }
     muteBtn.addEventListener("click", () => {
+      if (soundUnlockedByMutePress) {
+        soundUnlockedByMutePress = false;
+        return;
+      }
+      hasGesture = true;
       wantMuted = !wantMuted;
       applyMute();
-      muteBtn.textContent = wantMuted ? "unmute" : "mute";
-      muteBtn.setAttribute("aria-pressed", String(wantMuted));
     });
 
     // ---------- spend pill + popover ----------
