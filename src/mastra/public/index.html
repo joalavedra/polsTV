@@ -293,7 +293,7 @@
 
   #spend-popover, #share-popover {
     position: fixed;
-    z-index: 15;
+    z-index: 16;
     padding: .9rem;
     display: flex;
     flex-direction: column;
@@ -459,7 +459,7 @@
     right: 0;
     bottom: var(--inputbar-h);
     height: 70dvh;
-    z-index: 11;
+    z-index: 12;
     background: var(--panel-bg);
     border: 1px solid var(--panel-border);
     backdrop-filter: blur(14px);
@@ -497,7 +497,7 @@
   #sheet-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 9;
+    z-index: 11;
     background: rgba(0, 0, 0, .5);
     opacity: 0;
     pointer-events: none;
@@ -511,6 +511,7 @@
   #more-sheet-backdrop {
     position: fixed;
     inset: 0;
+    z-index: 14;
     background: rgba(0, 0, 0, .55);
   }
   .sheet-panel {
@@ -518,7 +519,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 1;
+    z-index: 15;
     background: #111;
     border: 1px solid var(--panel-border);
     border-radius: 20px 20px 0 0;
@@ -571,6 +572,9 @@
 
     #action-rail { right: 12px; bottom: calc(var(--inputbar-h) + 28px + env(safe-area-inset-bottom, 0px)); }
     #stage-caption { bottom: calc(var(--inputbar-h) + env(safe-area-inset-bottom, 0px)); padding-top: 56px; }
+    /* Mobile's rail is avatar/like/chat/share/more — pitch and spend live in the more-sheet. */
+    #pitch-btn, #spend-pill { display: none; }
+    #more-btn { display: flex; }
 
     #say-input { font-size: 16px; }
     #say-form { padding-bottom: calc(.75rem + env(safe-area-inset-bottom, 0px)); }
@@ -600,14 +604,21 @@
     #subscriber-container video, #subscriber-container object { object-fit: cover !important; }
     .chrome { display: none; }
 
+    /* Short viewport: a smaller button + tighter gap so all 5 rail items fit above the input bar
+       without spilling off the top of the screen. */
     #action-rail {
-      right: 10px;
-      bottom: calc(var(--inputbar-h) + 10px + env(safe-area-inset-bottom, 0px));
-      gap: 12px;
+      right: 8px;
+      bottom: calc(var(--inputbar-h) + 6px + env(safe-area-inset-bottom, 0px));
+      gap: 6px;
+      --rail-btn: 36px;
     }
+    .rail-label { font-size: .6rem; }
     #stage-caption { bottom: calc(var(--inputbar-h) + env(safe-area-inset-bottom, 0px)); padding-top: 28px; }
+    #pitch-btn, #spend-pill { display: none; }
+    #more-btn { display: flex; }
 
-    #say-form { position: fixed; left: 0; right: 0; bottom: 0; padding-bottom: env(safe-area-inset-bottom, 0px); }
+    /* position/left/right/bottom already come from the base #say-form rule above. */
+    #say-form { padding-bottom: env(safe-area-inset-bottom, 0px); }
     .amend-toggle { display: none !important; }
 
     #panel {
@@ -693,7 +704,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 12;
+    z-index: 13;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -1100,9 +1111,8 @@
       right: 0;
       bottom: 0;
       width: var(--side-col-w);
-      background: transparent;
-      border-top: 1px solid var(--panel-border);
       background: rgba(0, 0, 0, .2);
+      border-top: 1px solid var(--panel-border);
     }
     .you-chip { display: block; }
   }
@@ -1227,7 +1237,7 @@
         <span class="rail-label">spend</span>
       </button>
       <button type="button" class="rail-item" id="more-btn" aria-haspopup="dialog" aria-expanded="false"
-        aria-controls="more-sheet" hidden>
+        aria-controls="more-sheet">
         <span class="rail-icon" aria-hidden="true">&#8943;</span>
       </button>
     </div>
@@ -1587,21 +1597,22 @@
     // Two entry points (the top-bar button on desktop, "Pure TV" in mobile's more-sheet) and two
     // ways back out (the top-bar button again, or #restore-interface-btn — bottom-right, fades in
     // on pointer/touch activity, and on mobile a tap on the picture itself also restores).
+    function isChromeHidden() { return document.body.classList.contains("chrome-hidden"); }
     function setChromeHidden(hidden) {
       document.body.classList.toggle("chrome-hidden", hidden);
       interfaceBtn.setAttribute("aria-pressed", String(hidden));
       moreInterfaceBtn.setAttribute("aria-pressed", String(hidden));
       if (hidden) closeSpendPopover({ returnFocus: false });
     }
-    interfaceBtn.addEventListener("click", () => setChromeHidden(!document.body.classList.contains("chrome-hidden")));
+    interfaceBtn.addEventListener("click", () => setChromeHidden(!isChromeHidden()));
     moreInterfaceBtn.addEventListener("click", () => {
-      setChromeHidden(!document.body.classList.contains("chrome-hidden"));
+      setChromeHidden(!isChromeHidden());
       closeMoreSheet();
     });
     restoreInterfaceBtn.addEventListener("click", () => setChromeHidden(false));
     let restoreFadeTimer = null;
     function pokeRestoreHint() {
-      if (!document.body.classList.contains("chrome-hidden")) return;
+      if (!isChromeHidden()) return;
       document.body.classList.add("show-restore");
       clearTimeout(restoreFadeTimer);
       restoreFadeTimer = setTimeout(() => document.body.classList.remove("show-restore"), 2200);
@@ -1854,7 +1865,7 @@
     videoWrap.addEventListener("click", async (event) => {
       // Pure TV: tapping the picture itself is the mobile way back in (point-move fades in
       // #restore-interface-btn on desktop). Still likes on the same tap either way.
-      if (document.body.classList.contains("chrome-hidden")) setChromeHidden(false);
+      if (isChromeHidden()) setChromeHidden(false);
       if (await likeCurrentScene()) spawnHeart(event.clientX, event.clientY);
     });
     likeBtn.addEventListener("click", async (event) => {
@@ -1881,7 +1892,7 @@
       } else if (key === "m") {
         muteBtn.click();
       } else if (key === "i") {
-        setChromeHidden(!document.body.classList.contains("chrome-hidden"));
+        setChromeHidden(!isChromeHidden());
       } else if (key === "/") {
         event.preventDefault();
         sayInput.focus();
