@@ -347,8 +347,10 @@
     }
 
     #splash-tap, #name-cancel, #name-confirm { min-height: 44px; }
-    #drawer-btn, #drawer-close { display: none; }
   }
+  /* Drawer controls exist only for landscape phones (shown in the block below). This used to sit
+     inside the portrait query, so desktop never got it and showed a stray close button. */
+  #drawer-btn, #drawer-close { display: none; }
 
   /* ---------- Landscape phone: video fullscreen, panel becomes a right-side drawer ---------- */
   @media (max-height: 500px) and (orientation: landscape) {
