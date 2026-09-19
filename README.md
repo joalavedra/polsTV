@@ -2,7 +2,7 @@
 
 <img width="1792" height="1008" alt="grok-image-9c55a3c0-56fd-4298-a939-11ca1bcac10c" src="https://github.com/user-attachments/assets/75b9e6de-d8f0-4aa0-b83c-07dfddd01bba" />
 
-Twitch meets community AI channel, polsTB. 
+Twitch meets community AI channel, polsTV. 
 
 Viewers send a one-line idea
 from the web page or by texting the Telegram bot [@timesquarescreenbot](https://t.me/timesquarescreenbot);
