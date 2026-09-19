@@ -9,3 +9,4 @@ dist/
 spike/log.jsonl
 spike/server.log
 mastra.db*
+.claude/

@@ -10,7 +10,7 @@
     "dev": "mastra dev",
     "build": "mastra build",
     "start": "mastra start",
-    "test": "vitest run",
+    "test": "vitest run --dir src",
     "lint": "oxlint src",
     "format": "oxfmt src",
     "typecheck": "tsc --noEmit"

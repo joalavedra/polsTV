@@ -1,4 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { DEFAULT_ALLOWED_URL_PATTERNS } from "@fal-ai/server-proxy";
 import { createRouteHandler } from "@fal-ai/server-proxy/hono";
 import { LibSQLStore } from "@mastra/libsql";
@@ -44,6 +46,20 @@ const falProxy = createRouteHandler({
   allowedUrlPatterns: [...DEFAULT_ALLOWED_URL_PATTERNS, "wma.fal.run/**"],
 });
 
+// `mastra dev` does not serve src/mastra/public, and Studio's catch-all owns every other path, so
+// the two pages get explicit routes. `mastra build` copies public/ next to the bundle; `mastra dev`
+// instead runs with src/mastra/public as its working directory. Read per request so page edits
+// show up without a restart.
+const pageDirs = [join(import.meta.dirname, "public"), process.cwd()];
+
+async function page(file: "index.html" | "broadcaster.html"): Promise<string> {
+  for (const dir of pageDirs) {
+    const html = await readFile(join(dir, file), "utf8").catch(() => undefined);
+    if (html !== undefined) return html;
+  }
+  throw new Error(`${file} not found in any of: ${pageDirs.join(", ")}`);
+}
+
 export const mastra = new Mastra({
   agents: { moderator, sceneWriter, showrunner },
   // Channels (Telegram) need storage on the Mastra instance or subscriptions, dedup and approvals
@@ -52,7 +68,21 @@ export const mastra = new Mastra({
   server: {
     // Hosts inject PORT; parallel dev servers set it to avoid the 4111 default.
     port: Number(process.env["PORT"] ?? 4111),
+    // Studio would otherwise claim "/" and shadow the viewer page.
+    studioBase: "/studio",
     apiRoutes: [
+      registerApiRoute("/", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => c.html(await page("index.html")),
+      }),
+
+      registerApiRoute("/broadcaster.html", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => c.html(await page("broadcaster.html")),
+      }),
+
       registerApiRoute("/status", {
         method: "GET",
         requiresAuth: false,
