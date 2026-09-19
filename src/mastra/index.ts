@@ -155,7 +155,8 @@ export const mastra = new Mastra({
             const [prompt, announcerUrl] = await Promise.all([
               writeSteer(channel.status().now?.prompt, idea.text),
               synthesise(`steer-${idea.id}`, announcerLine(idea.name, idea.text))
-                .then((clipId) => `/announcer/${clipId}`)
+                // Page-relative, so it still resolves when the app is served under a path prefix.
+                .then((clipId) => `announcer/${clipId}`)
                 .catch((error: unknown) => {
                   console.error(`announcer failed for idea ${idea.id}, steering without it:`, error);
                   return undefined;

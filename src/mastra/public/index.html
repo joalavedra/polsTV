@@ -611,7 +611,7 @@
     videoWrap.addEventListener("click", async (event) => {
       let ok = false;
       try {
-        const res = await fetch("/like", {
+        const res = await fetch("like", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ uid }),
@@ -652,7 +652,7 @@
     }
     async function postIdea(name, text) {
       setSaying(true);
-      const { status, data } = await postJSONSafe("/say", { uid, name, text, source: "web" });
+      const { status, data } = await postJSONSafe("say", { uid, name, text, source: "web" });
       setSaying(false);
       if (status === 200) {
         sayInput.value = "";
@@ -782,7 +782,7 @@
     let statusTimer = null;
     async function pollOnce() {
       try {
-        const res = await fetch(`/status?uid=${encodeURIComponent(uid)}`);
+        const res = await fetch(`status?uid=${encodeURIComponent(uid)}`);
         if (!res.ok) return;
         renderStatus(await res.json());
       } catch { /* transient network hiccup, next tick retries */ }
@@ -832,7 +832,7 @@
     async function connectViewer() {
       let creds;
       try {
-        const res = await fetch("/viewer-token");
+        const res = await fetch("viewer-token");
         if (!res.ok) throw new Error(`viewer-token ${res.status}`);
         creds = await res.json();
       } catch {

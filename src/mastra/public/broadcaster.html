@@ -357,7 +357,7 @@
   async function connectVonage() {
     let token;
     try {
-      token = await fetchJson(`/b/${state.secret}/publisher-token`);
+      token = await fetchJson(`b/${state.secret}/publisher-token`);
     } catch (e) {
       log("vonage_token_failed", { message: String(e) });
       return scheduleVonageReconnect();
@@ -427,7 +427,7 @@
     if (applied && sentAt) state.lastLatencyMs = Date.now() - sentAt;
     state.steerSentAt.delete(steerId);
     try {
-      await fetch(`/b/${state.secret}/steer-result`, {
+      await fetch(`b/${state.secret}/steer-result`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -526,7 +526,10 @@
     if (!extra.imageUrl) setPhase("OPENING");
     const { createFalClient } = await import("https://esm.sh/@fal-ai/client@1.11.0-alpha.3");
     const { wma } = await import("https://esm.sh/@fal-ai/client@1.11.0-alpha.3/realtime");
-    const fal = createFalClient({ proxyUrl: `/b/${state.secret}/fal-proxy` });
+    // URLs are page-relative so the app also works behind a path prefix (site.com/polstv/).
+    // The fal client gets a resolved path in case it does not accept a relative one.
+    const proxyUrl = new URL(`b/${state.secret}/fal-proxy`, location.href).pathname;
+    const fal = createFalClient({ proxyUrl });
     const video = document.createElement("video");
     video.autoplay = true;
     video.playsInline = true;
@@ -590,7 +593,7 @@
     log("rotation_start", {});
     let statusNow;
     try {
-      statusNow = await fetchJson("/status");
+      statusNow = await fetchJson("status");
     } catch (e) {
       return log("rotation_status_failed", { message: String(e) });
     }
@@ -643,7 +646,7 @@
     if (!state.secret) return;
     let res;
     try {
-      res = await fetch(`/b/${state.secret}/next-steer`);
+      res = await fetch(`b/${state.secret}/next-steer`);
     } catch (e) {
       return log("next_steer_failed", { message: String(e) });
     }
@@ -673,7 +676,7 @@
   async function pollStatusForIdleInner() {
     let status;
     try {
-      status = await fetchJson("/status");
+      status = await fetchJson("status");
     } catch (e) {
       return log("status_poll_failed", { message: String(e) });
     }

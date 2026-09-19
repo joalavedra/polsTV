@@ -36,7 +36,7 @@ interface Status {
 | Route | Response |
 |---|---|
 | `GET /b/:secret/publisher-token` | `{ applicationId, sessionId, token }` publish-capable |
-| `GET /b/:secret/next-steer` | `200 { steerId, ideaId, prompt, announcerUrl? }` or `204`. `announcerUrl` is a same-origin mp3 to mix into the stream when the steer is sent; absent if TTS failed. Idempotent: the same steer is returned until resolved. Doubles as the broadcaster heartbeat, so poll it every ~3 s. |
+| `GET /b/:secret/next-steer` | `200 { steerId, ideaId, prompt, announcerUrl? }` or `204`. `announcerUrl` is a page-relative mp3 path (`announcer/<id>`) to mix into the stream when the steer is sent; absent if TTS failed. Idempotent: the same steer is returned until resolved. Doubles as the broadcaster heartbeat, so poll it every ~3 s. |
 | `POST /b/:secret/steer-result` | body `{ steerId, applied, reason? }` → `{ ok, onAir }`. Send `applied:true` on Director's `prompt_applied`, `false` on `prompt_rejected`. |
 | `ALL /b/:secret/fal-proxy` | fal client `proxyUrl`. Holds `FAL_KEY` server-side. |
 
