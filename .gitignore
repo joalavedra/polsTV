@@ -1,0 +1,11 @@
+.env
+.env.*
+node_modules/
+.mastra/
+dist/
+*.pem
+*.key
+.gstack/
+spike/log.jsonl
+spike/server.log
+mastra.db*

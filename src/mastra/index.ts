@@ -1,0 +1,156 @@
+import { timingSafeEqual } from "node:crypto";
+import { DEFAULT_ALLOWED_URL_PATTERNS } from "@fal-ai/server-proxy";
+import { createRouteHandler } from "@fal-ai/server-proxy/hono";
+import { Mastra } from "@mastra/core/mastra";
+import { registerApiRoute } from "@mastra/core/server";
+import { z } from "zod";
+import { Channel } from "./channel";
+import { MAX_IDEA_CHARS, moderate, moderator, sceneWriter, writeSteer } from "./showrunner";
+import { videoAccess } from "./vonage";
+
+const broadcasterSecret = process.env["BROADCASTER_SECRET"];
+if (!broadcasterSecret || broadcasterSecret.length < 32) {
+  throw new Error("BROADCASTER_SECRET is missing or short. Set 32+ random chars in .env.");
+}
+
+const channel = new Channel();
+let writingSteer = false;
+
+// Web callers may not claim a "telegram:" uid; those only come from the Telegram channel.
+const uid = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);
+const sayBody = z.object({
+  uid,
+  name: z.string().trim().min(1).max(24),
+  text: z.string().trim().min(1).max(MAX_IDEA_CHARS),
+  source: z.enum(["web", "voice"]).default("web"),
+});
+const likeBody = z.object({ uid });
+const steerResultBody = z.object({
+  steerId: z.number().int(),
+  applied: z.boolean(),
+  reason: z.string().max(200).optional(),
+});
+
+function isBroadcaster(secret: string): boolean {
+  const given = Buffer.from(secret);
+  const expected = Buffer.from(broadcasterSecret as string);
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
+
+// Director's signalling bridge is missing from the proxy's default allow-list; without it every
+// session fails with HTTP 400 before reaching fal (docs/cards/director.md, spike results).
+const falProxy = createRouteHandler({
+  allowedUrlPatterns: [...DEFAULT_ALLOWED_URL_PATTERNS, "wma.fal.run/**"],
+});
+
+export const mastra = new Mastra({
+  agents: { moderator, sceneWriter },
+  server: {
+    apiRoutes: [
+      registerApiRoute("/status", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => {
+          const viewer = uid.safeParse(c.req.query("uid"));
+          if (viewer.success) channel.sawViewer(viewer.data);
+          return c.json(channel.status());
+        },
+      }),
+
+      registerApiRoute("/say", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          const body = sayBody.safeParse(await c.req.json().catch(() => null));
+          if (!body.success) return c.json({ ok: false, reason: "Invalid message." }, 400);
+          let verdict;
+          try {
+            verdict = await moderate(body.data.text);
+          } catch (error) {
+            console.error("moderation failed, idea not queued:", error);
+            return c.json({ ok: false, reason: "Moderation is unavailable, try again." }, 503);
+          }
+          if (!verdict.ok) return c.json(verdict, 422);
+          const added = channel.addIdea(body.data);
+          return added.ok ? c.json({ ok: true, id: added.idea.id }) : c.json(added, 409);
+        },
+      }),
+
+      registerApiRoute("/like", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          const body = likeBody.safeParse(await c.req.json().catch(() => null));
+          if (!body.success) return c.json({ ok: false }, 400);
+          return c.json({ ok: channel.like(body.data.uid) });
+        },
+      }),
+
+      registerApiRoute("/viewer-token", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => c.json(await videoAccess("subscriber")),
+      }),
+
+      registerApiRoute("/b/:secret/publisher-token", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => {
+          if (!isBroadcaster(c.req.param("secret"))) return c.notFound();
+          return c.json(await videoAccess("publisher"));
+        },
+      }),
+
+      registerApiRoute("/b/:secret/next-steer", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => {
+          if (!isBroadcaster(c.req.param("secret"))) return c.notFound();
+          channel.sawBroadcaster();
+          const pending = channel.pendingSteer();
+          if (pending) return c.json(pending);
+          const idea = channel.nextIdea();
+          if (!idea || !channel.canSteer() || writingSteer) return c.body(null, 204);
+          writingSteer = true;
+          try {
+            const prompt = await writeSteer(channel.status().now?.prompt, idea.text);
+            return c.json(channel.beginSteer(idea.id, prompt));
+          } finally {
+            writingSteer = false;
+          }
+        },
+      }),
+
+      registerApiRoute("/b/:secret/steer-result", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          if (!isBroadcaster(c.req.param("secret"))) return c.notFound();
+          const body = steerResultBody.safeParse(await c.req.json().catch(() => null));
+          if (!body.success) return c.json({ ok: false }, 400);
+          if (!body.data.applied) console.warn("director rejected a steer:", body.data.reason);
+          const scene = channel.resolveSteer(body.data.steerId, body.data.applied);
+          return c.json({ ok: true, onAir: scene?.ideaId ?? null });
+        },
+      }),
+
+      registerApiRoute("/b/:secret/fal-proxy", {
+        method: "ALL",
+        requiresAuth: false,
+        handler: async (c) => {
+          if (!isBroadcaster(c.req.param("secret"))) return c.notFound();
+          // Mastra vendors its own copy of Hono's types, so its Context is nominally distinct from
+          // the one the proxy adapter declares. Same runtime object.
+          const upstream = await falProxy(c as unknown as Parameters<typeof falProxy>[0]);
+          // The adapter hands back fetch's Response, whose headers are immutable; Mastra's
+          // middleware then throws "TypeError: immutable" adding its own. Re-wrap it. fetch has
+          // already decoded the body, so the encoding and length headers no longer describe it.
+          const headers = new Headers(upstream.headers);
+          headers.delete("content-encoding");
+          headers.delete("content-length");
+          return new Response(upstream.body, { status: upstream.status, headers });
+        },
+      }),
+    ],
+  },
+});

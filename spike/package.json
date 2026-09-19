@@ -1,0 +1,1 @@
+{"name":"teleslop-spike","private":true,"type":"module","dependencies":{"@fal-ai/client":"1.11.0-alpha.3","@fal-ai/server-proxy":"1.2.1","@hono/node-server":"2.1.1","hono":"4.13.8"}}

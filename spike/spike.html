@@ -1,0 +1,115 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>director spike</title>
+<video id="v" autoplay playsinline muted style="width: 640px; background: #000"></video>
+<pre id="out" style="font: 11px monospace; white-space: pre-wrap"></pre>
+<script type="module">
+  const t0 = performance.now();
+  const out = document.getElementById("out");
+  const video = document.getElementById("v");
+  const log = (type, data = {}) => {
+    const line = JSON.stringify({ t: Math.round(performance.now() - t0), type, ...data });
+    out.textContent += `${line}\n`;
+    fetch("/log", { method: "POST", body: line, keepalive: true });
+  };
+  window.addEventListener("error", (e) => log("window_error", { message: e.message }));
+  window.addEventListener("unhandledrejection", (e) => log("rejection", { message: String(e.reason) }));
+
+  const codecs = (kind) => [
+    ...new Set(RTCRtpReceiver.getCapabilities(kind)?.codecs.map((c) => c.mimeType) ?? []),
+  ];
+  log("caps", { video: codecs("video"), audio: codecs("audio"), ua: navigator.userAgent });
+
+  const params = new URLSearchParams(location.search);
+  if (params.get("go") !== "1") {
+    log("idle", { hint: "add ?go=1 to open ONE paid session" });
+  } else {
+    const { createFalClient } = await import("https://esm.sh/@fal-ai/client@1.11.0-alpha.3");
+    const { wma } = await import("https://esm.sh/@fal-ai/client@1.11.0-alpha.3/realtime");
+    const fal = createFalClient({ proxyUrl: "/api/fal/proxy" });
+
+    const RUN_MS = Number(params.get("ms") ?? 55000);
+    const STEER_AT_MS = 20000;
+    let version = 1;
+    let steerSentAt = 0;
+    let frameTimer;
+    let frameCount = 0;
+
+    const grabFrame = (label) => {
+      if (video.readyState < 2) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = 640;
+      canvas.height = Math.round((640 * video.videoHeight) / video.videoWidth) || 360;
+      canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => fetch(`/frame/${label}`, { method: "POST", body: blob }), "image/jpeg", 0.8);
+    };
+
+    const session = fal.realtime.open(wma("minimax/h3-max/director"), {
+      receive: ["video", "audio"],
+      onState: (state) => log("state", { state }),
+      onError: (error) => log("error", { message: String(error?.message ?? error) }),
+      onDiagnostic: (event) => log("diag", { event }),
+      onMedia: (stream) => {
+        log("media", { tracks: stream.getTracks().map((t) => `${t.kind}:${t.readyState}`) });
+        video.srcObject = stream;
+        video.addEventListener(
+          "playing",
+          () => {
+            log("playing", { w: video.videoWidth, h: video.videoHeight });
+            frameTimer = setInterval(() => {
+              frameCount += 1;
+              grabFrame(`f${String(frameCount).padStart(2, "0")}_${Math.round((performance.now() - t0) / 1000)}s`);
+            }, 4000);
+            setTimeout(() => {
+              steerSentAt = performance.now();
+              version += 1;
+              session.send({
+                type: "prompt",
+                prompt_version: version,
+                prompt:
+                  "The same capybara calmly walks out of the kitchen into a neon-lit 1980s arcade, " +
+                  "claymation style, handheld camcorder, the rubber duck still on its head.",
+              });
+              log("steer_sent", { version });
+            }, STEER_AT_MS);
+          },
+          { once: true },
+        );
+      },
+      onData: (raw) => {
+        let msg;
+        try {
+          msg = JSON.parse(raw);
+        } catch {
+          return log("data_raw", { raw: String(raw).slice(0, 300) });
+        }
+        const extra = msg.type === "prompt_applied" && steerSentAt ? { steer_ms: Math.round(performance.now() - steerSentAt) } : {};
+        log(`fal:${msg.type}`, { msg: JSON.stringify(msg).slice(0, 700), ...extra });
+      },
+    });
+
+    session.send({
+      type: "configure",
+      protocol_version: 1,
+      prompt_version: version,
+      resolution: "768p",
+      aspect_ratio: "16:9",
+      memory: 12,
+      prompt:
+        "Claymation style, handheld camcorder: a deadpan capybara wearing a rubber duck on its head " +
+        "stirs a pot of soup in a cramped 1970s wood-panelled kitchen. Keep the subject centre frame.",
+    });
+    log("configure_sent");
+
+    setTimeout(async () => {
+      clearInterval(frameTimer);
+      grabFrame("last");
+      session.send({ type: "stop" });
+      log("stop_sent");
+      setTimeout(async () => {
+        await session.close();
+        log("closed");
+      }, 2000);
+    }, RUN_MS);
+  }
+</script>
