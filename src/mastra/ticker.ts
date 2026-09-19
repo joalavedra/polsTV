@@ -1,7 +1,7 @@
 /**
  * The ticker's in-memory item store: images shared via Telegram that scroll along the bottom of
- * the broadcast picture. Pure and synchronous, clock injected — same style as Channel
- * (channel.ts).
+ * the viewer page, outside the broadcast picture. Pure and synchronous, clock injected — same
+ * style as Channel (channel.ts).
  *
  * ponytail: in-memory only, capped at 12 items; state dies with the process, like channel.ts.
  */
@@ -19,7 +19,9 @@ export interface TickerItem {
 }
 
 export const TICKER_MAX_ITEMS = 12;
-export const TICKER_ITEM_TTL_MS = 30 * 60 * 1000;
+export const TICKER_ITEM_TTL_MS = 60 * 1000;
+/** Same length as TICKER_ITEM_TTL_MS by design: a user gets one live item at a time. */
+export const TICKER_COOLDOWN_MS = 60 * 1000;
 
 export interface AddTickerItemInput {
   uid: string;
@@ -32,13 +34,23 @@ export interface AddTickerItemInput {
 export class Ticker {
   private nextId = 1;
   private items: TickerItem[] = [];
+  private lastAcceptedAt = new Map<string, number>();
 
   constructor(private readonly now: () => number = Date.now) {}
+
+  /** Whole seconds until this uid may add another item; 0 when they may add now. */
+  cooldownSeconds(uid: string): number {
+    const last = this.lastAcceptedAt.get(uid);
+    if (last === undefined) return 0;
+    const left = TICKER_COOLDOWN_MS - (this.now() - last);
+    return left > 0 ? Math.ceil(left / 1000) : 0;
+  }
 
   /**
    * Adds a new item. A user has at most one active item at a time: a newer accepted image from
    * the same uid replaces their previous one instead of queueing alongside it. Once there are
-   * more than TICKER_MAX_ITEMS the oldest drops.
+   * more than TICKER_MAX_ITEMS the oldest drops. Callers are expected to have checked
+   * cooldownSeconds() first — this method doesn't enforce it, same division as PitchSlot.
    */
   add(input: AddTickerItemInput): TickerItem {
     this.expire();
@@ -53,6 +65,7 @@ export class Ticker {
       bytes: input.bytes,
     };
     this.items.push(item);
+    this.lastAcceptedAt.set(input.uid, this.now());
     if (this.items.length > TICKER_MAX_ITEMS) this.items.shift();
     return item;
   }

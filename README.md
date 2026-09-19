@@ -121,15 +121,16 @@ for the moderator.
 
 ### The ticker
 
-A TV-style crawl scrolls along the bottom of the broadcast picture itself, so it appears for every
-viewer and in recordings with no change to the viewer page. Message
+A TV-style crawl scrolls along the bottom of the viewer page (`public/index.html`), fixed to the
+viewport edge, outside the video — it never touches the broadcast picture itself, so it's absent
+from the published stream and from recordings. Message
 [@timesquarescreenbot](https://t.me/timesquarescreenbot) a photo, optionally with a caption, and —
-once it clears moderation — it scrolls in the ticker for 30 minutes. The bot picks the smallest
+once it clears moderation — it scrolls in the ticker for 1 minute. The bot picks the smallest
 Telegram-provided size whose shorter side is at least 240px (never the original), refuses anything
 over 1 MB or not JPEG/PNG/WEBP by magic bytes, and moderates the image on a Nebius vision model
 before it is ever stored; a rejection or a moderation error/timeout both refuse the photo. One
-image per user at a time — a new one replaces the old — and the ticker holds at most 12 items.
-Text messages to the bot are unaffected.
+image per user at a time, at most one per minute — a newer accepted photo still replaces the
+older — and the ticker holds at most 12 items. Text messages to the bot are unaffected.
 
 ## Sponsor tech
 
@@ -137,11 +138,11 @@ Text messages to the bot are unaffected.
 |---|---|
 | **fal — H3 Max Director** | The channel's video: one continuous WebRTC session (`minimax/h3-max/director`), steered live with `prompt` / `prompt_version` messages sent from the broadcaster page — never a pre-rendered clip. |
 | **Nebius Token Factory** | Five jobs through Mastra's `nebius/<model>` router, all on `Qwen/Qwen3-30B-A3B-Instruct-2507`: moderating every idea and nickname, writing the steering prompt that transitions from the current scene, writing the narrator line spoken over it, and — for the karma-gated pitch — a second moderation rubric and the ad read. |
-| **Mastra** | The backend framework: six agents (`moderator`, `sceneWriter`, `narrator`, `pitchModerator`, `pitchWriter`, `showrunner`), a Telegram channel via `@chat-adapter/telegram` in polling mode, per-user `Memory` (last 10 messages) on LibSQL storage, and the `registerApiRoute()` custom routes that serve the whole HTTP contract plus both static pages. |
+| **Mastra** | The backend framework: six agents (`moderator`, `sceneWriter`, `narrator`, `pitchModerator`, `pitchWriter`, `showrunner`), a Telegram channel via `@chat-adapter/telegram` in polling mode, per-user `Memory` (last 10 messages) on LibSQL storage, and the `registerApiRoute()` custom routes that serve the whole HTTP contract plus both static pages. A voice note to the bot is transcribed before it reaches the showrunner, so every tool works by voice too. |
 | **Nebius Token Factory** | Two jobs through Mastra's `nebius/<model>` router, both on `Qwen/Qwen3-30B-A3B-Instruct-2507`: moderating every idea and nickname, and writing the steering prompt that transitions from the current scene. A third job, `nebius/openbmb/MiniCPM-V-4_5`, moderates every ticker photo before it is stored. |
 | **Mastra** | The backend framework: three agents (`moderator`, `sceneWriter`, `showrunner`), a Telegram channel via `@chat-adapter/telegram` in polling mode, per-user `Memory` (last 10 messages) on LibSQL storage, and the `registerApiRoute()` custom routes that serve the whole HTTP contract plus both static pages. |
 | **Vonage Video API** | Fan-out: one routed session. The broadcaster publishes a canvas-plus-WebAudio `MediaStreamTrack` with `OT.initPublisher`; every viewer connects with a subscribe-only token from `GET /viewer-token`. |
-| **SLNG** | TTS only: `slng/fish/tts:s2.1-pro` on `eu-west.api.slng.ai` synthesises the channel's voice — the narrator line written for each steer, and the sponsored ad read a viewer unlocks at 3 karma — mixed into the published audio one clip at a time, ducking Director's own audio while it plays. |
+| **SLNG** | `slng/fish/tts:s2.1-pro` on `eu-west.api.slng.ai` synthesises the channel's voice — the narrator line written for each steer, and the sponsored ad read a viewer unlocks at 3 karma — mixed into the published audio one clip at a time, ducking Director's own audio while it plays. Voice notes to the bot are transcribed with SLNG. |
 | **Galtea** | Adversarial evaluation of the moderator: a SECURITY dataset red-teamed the real-person rule, and the run found it missed a real person when the idea was written in Spanish. Fixed and re-run before/after — see `docs/eval/GALTEA.md`. |
 
 ### Evaluation

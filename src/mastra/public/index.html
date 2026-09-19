@@ -45,6 +45,10 @@
     /* Height of the pinned input bar. Kept as one number so the sheet, rail and caption block
        all clear it consistently instead of guessing at three different pixel counts. */
     --inputbar-h: 64px;
+    /* ticker:start — layout contract: 0 by default, set on body.has-ticker below. Includes the
+       bottom safe-area inset, so anything clearing the bar just needs bottom: var(--ticker-h). */
+    --ticker-h: 0px;
+    /* ticker:end */
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
@@ -461,7 +465,8 @@
     position: fixed;
     left: 0;
     right: 0;
-    bottom: var(--inputbar-h);
+    /* ticker: cleared above the crawl bar too — --ticker-h is 0 when it's not showing. */
+    bottom: calc(var(--inputbar-h) + var(--ticker-h));
     height: 70dvh;
     z-index: 12;
     background: var(--panel-bg);
@@ -474,7 +479,7 @@
     overflow: hidden;
     /* The sheet is anchored above the input bar, so 100% alone left its tab row peeking out from
        behind the translucent bar. Push it the bar's height further. */
-    transform: translateY(calc(100% + var(--inputbar-h)));
+    transform: translateY(calc(100% + var(--inputbar-h) + var(--ticker-h)));
     transition: transform .25s ease;
   }
   body.sheet-open #panel { transform: translateY(0); }
@@ -524,7 +529,7 @@
     position: fixed;
     left: 0;
     right: 0;
-    bottom: 0;
+    bottom: var(--ticker-h); /* ticker: clears the crawl bar when it's showing */
     z-index: 15;
     background: #111;
     border: 1px solid var(--panel-border);
@@ -630,7 +635,7 @@
     #panel {
       right: 0;
       left: auto;
-      bottom: 0;
+      bottom: var(--ticker-h); /* ticker: clears the crawl bar when it's showing */
       top: 0;
       height: auto;
       width: min(86vw, 340px);
@@ -709,7 +714,7 @@
     position: fixed;
     left: 0;
     right: 0;
-    bottom: 0;
+    bottom: var(--ticker-h); /* ticker: clears the crawl bar when it's showing */
     z-index: 13;
     display: flex;
     flex-wrap: wrap;
@@ -838,6 +843,69 @@
   }
   .toast.show { opacity: 1; transform: translateY(0); }
   @media (prefers-reduced-motion: reduce) { .toast { transition: opacity .2s; transform: none; } }
+
+  /* ticker:start — bottom crawl of shared Telegram photos, outside the video (the broadcast
+     picture itself no longer draws it). Self-contained, safe to drop in a conflict. Sets
+     body.has-ticker + --ticker-h (declared on :root above) as the layout contract other
+     bottom-anchored chrome reads to clear it. */
+  body.has-ticker { --ticker-h: calc(56px + env(safe-area-inset-bottom, 0px)); }
+  @media (max-width: 820px) {
+    body.has-ticker { --ticker-h: calc(44px + env(safe-area-inset-bottom, 0px)); }
+  }
+  #ticker-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 17;
+    height: var(--ticker-h);
+    /* Content height = --ticker-h minus the safe-area padding below, via border-box. */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    overflow: hidden;
+    background: rgba(8, 8, 12, .88);
+    border-top: 1px solid var(--panel-border);
+  }
+  #ticker-track {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    width: max-content;
+    animation: ticker-scroll linear infinite;
+  }
+  @keyframes ticker-scroll {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* Stays at translateX(0): overflow:hidden on #ticker-bar crops it to the first items,
+       shown statically instead of scrolling. */
+    #ticker-track { animation: none; }
+  }
+  .ticker-item {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    padding: 0 1.1rem;
+    flex: none;
+    white-space: nowrap;
+    color: var(--text);
+    font-size: .82rem;
+  }
+  .ticker-thumb {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    object-fit: cover;
+    flex: none;
+    background: rgba(255, 255, 255, .08);
+  }
+  .ticker-name { font-weight: 700; }
+  .ticker-caption { font-weight: 400; color: var(--text-dim); }
+  @media (max-width: 820px) {
+    .ticker-item { font-size: .76rem; padding: 0 .8rem; gap: .4rem; }
+    .ticker-thumb { width: 28px; height: 28px; border-radius: 6px; }
+  }
+  /* ticker:end */
 
   /* pitch:start — karma-gated sponsored voice-over. Self-contained, safe to drop in a conflict.
      #pitch-btn's own look now comes from .rail-item/.rail-icon (action-rail, above) and
@@ -1019,49 +1087,42 @@
     .toast { background: rgba(0, 0, 0, .92); }
   }
 
-  /* ================= Desktop (>820px wide, >500px tall) ================= */
+  /* ================= Desktop (>820px wide, >500px tall): the picture fills the whole viewport
+     minus the side column, edge to edge, with every control overlaid on top of it. ================= */
   @media (min-width: 821px) and (min-height: 501px) {
     body { overflow: hidden; }
 
     #video-stage {
       position: fixed;
-      top: var(--topbar-h);
-      left: 0;
-      right: calc(var(--side-col-w) + 112px);
-      bottom: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-    }
-    #video-wrap {
-      position: relative;
-      top: auto;
-      left: auto;
-      transform: none;
-      flex: none;
-      width: min(100%, 1280px, calc((100vh - var(--topbar-h) - 32px) * 16 / 9));
-      aspect-ratio: 16 / 9;
-      border-radius: 16px;
-      box-shadow: 0 24px 64px rgba(0, 0, 0, .55);
-    }
-    #subscriber-container { border-radius: inherit; }
-    #heart-layer { position: fixed; inset: 0; }
-    #offair-card { border-radius: 12px; }
-    #stage-caption { border-radius: 0 0 16px 16px; padding-right: 24px; }
-
-    /* Pure TV grows the stage to the full window (backdrop stays), hides everything else, and
-       leaves only the small fading restore control (see the shared chrome-hidden rules above). */
-    body.chrome-hidden #video-stage {
-      right: 0;
       top: 0;
-      padding: 0;
+      left: 0;
+      right: var(--side-col-w);
+      bottom: var(--ticker-h, 0px);
     }
-    body.chrome-hidden #video-wrap {
-      width: min(100vw, calc(100vh * 16 / 9));
-      border-radius: 0;
-      box-shadow: none;
+    #video-wrap { position: absolute; inset: 0; }
+    /* Vonage's subscriber is created with fitMode:"contain" for every breakpoint (see the JS);
+       override to cover here with CSS !important rather than changing that option, exactly like
+       the landscape-phone drawer already does, so mobile portrait keeps showing the whole frame. */
+    #subscriber-container video, #subscriber-container object { object-fit: cover !important; }
+    #offair-card { border-radius: 12px; }
+    #stage-caption { padding-right: calc(24px + var(--rail-btn) + 16px); }
+
+    /* Top gradient so the top bar's pills stay legible over any picture underneath them. */
+    #video-stage::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 140px;
+      background: linear-gradient(to bottom, rgba(0, 0, 0, .5), transparent);
+      pointer-events: none;
+      z-index: 2;
     }
+
+    /* Pure TV: the side column goes too and the video takes the full window (still clear of the
+       ticker — see body.chrome-hidden's shared hide-list above for the rest of the chrome). */
+    body.chrome-hidden #video-stage { right: 0; }
 
     /* ---- Top bar ---- */
     .top-left {
@@ -1070,6 +1131,9 @@
       position: fixed;
       top: 14px;
       left: 20px;
+      /* Missing before: with the video now reaching top:0, its z-index:1 painted over this
+         corner unless given a stacking order of its own (.top-center/.top-right already had one). */
+      z-index: 10;
     }
     .top-logo { display: block; height: 36px; width: auto; border-radius: 8px; }
     .top-center { top: 14px; left: 68px; max-width: 40vw; }
@@ -1078,17 +1142,32 @@
     #viewer-pill { display: inline-flex; }
     #interface-btn { display: inline-flex; }
 
-    /* ---- Action rail: beside the stage, bottom-aligned with it ---- */
-    #action-rail { right: calc(var(--side-col-w) + 24px); bottom: 48px; gap: 20px; }
+    /* ---- Action rail: overlays the video's right edge, vertically centred-low, TikTok-style ---- */
+    #action-rail {
+      right: calc(var(--side-col-w) + 24px);
+      top: 58%;
+      bottom: auto;
+      transform: translateY(-50%);
+      gap: 20px;
+    }
+    /* Subtle dark scrim behind the icon column so white icons read over any picture. */
+    #action-rail::before {
+      content: "";
+      position: absolute;
+      inset: -24px -20px;
+      z-index: -1;
+      background: radial-gradient(60% 100% at 100% 50%, rgba(0, 0, 0, .4), transparent 70%);
+      pointer-events: none;
+    }
     #more-btn { display: none; }
     #pitch-btn, #spend-pill { display: flex; }
 
-    /* Popovers open beside the rail button that triggers them. */
+    /* Popovers open to the left of the rail, clear of both the side column and the viewport. */
     #spend-popover, #share-popover {
       left: auto;
       top: auto;
       right: calc(var(--side-col-w) + 24px + var(--rail-btn) + 12px);
-      bottom: 24px;
+      bottom: 20vh;
     }
 
     /* ---- Side column: "Up next" stacked above the persistent chat/rank panel ---- */
@@ -1097,7 +1176,7 @@
       left: auto;
       right: 0;
       top: calc(var(--topbar-h) + 34vh);
-      bottom: 0;
+      bottom: var(--ticker-h, 0px);
       height: auto;
       width: var(--side-col-w);
       border-radius: 0;
@@ -1131,7 +1210,7 @@
     #say-form {
       left: auto;
       right: 0;
-      bottom: 0;
+      bottom: var(--ticker-h, 0px);
       width: var(--side-col-w);
       background: rgba(0, 0, 0, .2);
       border-top: 1px solid var(--panel-border);
@@ -1139,17 +1218,10 @@
     .you-chip { display: block; }
   }
 
-  /* Narrow desktop (821-1100px): side column narrows and the rail overlays the stage's own
-     right edge instead of sitting beside it, so the picture stays as large as possible. */
+  /* Narrow desktop (821-1100px): only the side column narrows, so the picture stays as large as
+     possible. Everything above keys off --side-col-w already, so nothing else needs overriding. */
   @media (min-width: 821px) and (max-width: 1100px) and (min-height: 501px) {
     :root { --side-col-w: 320px; }
-    #video-stage { right: var(--side-col-w); }
-    #action-rail { right: calc(var(--side-col-w) + 12px); bottom: 24px; }
-    body.chrome-hidden #action-rail { right: 24px; }
-    #spend-popover, #share-popover { right: calc(var(--side-col-w) + 12px + var(--rail-btn) + 12px); }
-    /* The rail overlays the stage here (unlike the wide band, which reserves space beside it),
-       so the caption needs its wider clearance back to stay clear of the rail's buttons. */
-    #stage-caption { padding-right: 88px; }
   }
 </style>
 </head>
@@ -1425,6 +1497,14 @@
 
   <div id="toast-region" aria-live="polite"></div>
 
+  <!-- ticker:start — bottom crawl of shared Telegram photos, outside the video. class="chrome"
+       hides it with the rest of the chrome in pure-TV mode and in landscape-phone mode.
+       Items are built by JS (ticker:start/end further down); empty means hidden, no space. -->
+  <div id="ticker-bar" class="chrome" hidden aria-hidden="true">
+    <div id="ticker-track"></div>
+  </div>
+  <!-- ticker:end -->
+
   <script src="https://video.standard.vonage.com/v2/js/opentok.min.js"></script>
   <script type="module">
     // polsTV viewer page. One shared AI TV channel: type an idea, it steers the scene on air,
@@ -1548,6 +1628,8 @@
     const nameError = document.getElementById("name-error");
     const nameCancel = document.getElementById("name-cancel");
     const toastRegion = document.getElementById("toast-region");
+    const tickerBar = document.getElementById("ticker-bar"); // ticker
+    const tickerTrack = document.getElementById("ticker-track"); // ticker
 
     splashWordmark.textContent = APP_NAME;
 
@@ -1732,15 +1814,44 @@
     });
 
     // ---------- mute toggle ----------
+    // A browser PAUSES a video that is unmuted without a user gesture in this page load. First-time
+    // visitors tap the splash, so it worked for them; anyone reloading (splash already dismissed)
+    // got a frozen picture under a LIVE pill. Sound therefore waits for the first gesture, and the
+    // picture never does.
     let wantMuted = false;
+    let hasGesture = false;
     function applyMute() {
-      for (const video of subscriberContainer.querySelectorAll("video")) video.muted = wantMuted;
+      const muted = wantMuted || !hasGesture;
+      for (const video of subscriberContainer.querySelectorAll("video")) {
+        video.muted = muted;
+        if (video.paused) {
+          video.play().catch((error) => console.debug("subscriber play() refused:", error));
+        }
+      }
+      muteBtn.textContent = muted ? "unmute" : "mute";
+      muteBtn.setAttribute("aria-pressed", String(muted));
+    }
+    let soundUnlockedByMutePress = false;
+    function onFirstGesture(event) {
+      if (hasGesture) return;
+      hasGesture = true;
+      // If that first gesture is a press on the mute button itself, its click must not toggle the
+      // sound straight back off.
+      soundUnlockedByMutePress = muteBtn.contains(event.target);
+      applyMute();
+      try { OT.unblockAudio(); } catch { /* nothing blocked, or OT not ready yet */ }
+    }
+    for (const type of ["pointerdown", "keydown", "touchend"]) {
+      window.addEventListener(type, onFirstGesture, { capture: true, passive: true });
     }
     muteBtn.addEventListener("click", () => {
+      if (soundUnlockedByMutePress) {
+        soundUnlockedByMutePress = false;
+        return;
+      }
+      hasGesture = true;
       wantMuted = !wantMuted;
       applyMute();
-      muteBtn.textContent = wantMuted ? "unmute" : "mute";
-      muteBtn.setAttribute("aria-pressed", String(wantMuted));
     });
 
     // ---------- spend pill + popover ----------
@@ -1845,6 +1956,62 @@
       if (spendPopover.contains(event.target) || spendPill.contains(event.target)) return;
       closeSpendPopover({ returnFocus: false });
     });
+
+    // ticker:start — bottom crawl of shared Telegram photos. Polls GET ticker every 5s but only
+    // rebuilds the DOM when the set of item ids actually changes, so an unchanged ticker never
+    // restarts its CSS scroll animation.
+    const TICKER_POLL_MS = 5000;
+    const TICKER_PX_PER_SEC = 60;
+    let lastTickerIds = null;
+
+    function buildTickerItem(item) {
+      const el = h("div", "ticker-item");
+      const img = document.createElement("img");
+      img.className = "ticker-thumb";
+      img.alt = "";
+      img.src = item.url; // page-relative: resolves under a path prefix (site.com/polstv/) too
+      el.append(img, h("span", "ticker-name", item.name));
+      if (item.caption) el.appendChild(h("span", "ticker-caption", item.caption));
+      return el;
+    }
+
+    function renderTicker(items) {
+      document.body.classList.toggle("has-ticker", items.length > 0);
+      tickerBar.hidden = items.length === 0;
+      tickerTrack.textContent = "";
+      if (items.length === 0) return;
+      // Duplicated once so the loop never shows a gap: the keyframes translate exactly one
+      // copy's width (-50% of this doubled track), so the second copy lands where the first
+      // started the instant it scrolls off.
+      for (let copy = 0; copy < 2; copy += 1) {
+        for (const item of items) tickerTrack.appendChild(buildTickerItem(item));
+      }
+      const oneCopyWidth = tickerTrack.scrollWidth / 2;
+      tickerTrack.style.animationDuration = `${Math.max(oneCopyWidth / TICKER_PX_PER_SEC, 1)}s`;
+    }
+
+    async function fetchTicker() {
+      try {
+        const res = await fetch("ticker");
+        if (!res.ok) return;
+        const { items } = await res.json();
+        const ids = items.map((item) => item.id).join(",");
+        if (ids === lastTickerIds) return;
+        lastTickerIds = ids;
+        renderTicker(items);
+      } catch { /* transient network hiccup, next tick retries */ }
+    }
+    let tickerTimer = null;
+    function startTickerPolling() {
+      if (tickerTimer) return;
+      fetchTicker();
+      tickerTimer = setInterval(fetchTicker, TICKER_POLL_MS);
+    }
+    function stopTickerPolling() {
+      clearInterval(tickerTimer);
+      tickerTimer = null;
+    }
+    // ticker:end
 
     // ---------- likes: tap-the-video, and the discoverable like button ----------
     // lastNow mirrors status.now between polls so click handlers know the current scene
@@ -2564,25 +2731,32 @@
       if (document.hidden) {
         stopPolling();
         stopSpendPolling();
+        stopTickerPolling(); // ticker
       } else {
         startPolling();
         startSpendPolling();
+        startTickerPolling(); // ticker
       }
     });
     if (!document.hidden) {
       startPolling();
       startSpendPolling();
+      startTickerPolling(); // ticker
     }
 
     // ---------- ambient backdrop: same MediaStream as the subscriber's <video>, heavily
-    // blurred via CSS. Never a second Vonage subscription — just reads the existing element. ----------
+    // blurred via CSS. Never a second Vonage subscription — just reads the existing element.
+    // Desktop's video already covers the whole player region edge to edge, so the backdrop
+    // would only ever decode the same stream a second time for a picture no one can see —
+    // skip feeding it there; mobile keeps it as its background. ----------
     const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+    const desktopMQ = matchMedia("(min-width: 821px) and (min-height: 501px)");
     // Phones (portrait, and landscape phones, which can be wider than 820px) repaint a 32x18
     // snapshot of the picture twice a second instead of filtering the live stream. Measured at
     // 390x844: the live blurred <video> runs at 30fps / p50 33.3ms, the snapshot at 120fps /
     // p50 8.3ms — the same as dropping the backdrop entirely. Lowering the blur radius does not
     // help (blur(20px) also measured 30fps): the cost is filtering a texture that moves, not the
-    // radius. Desktop is left on the live video path below.
+    // radius. Desktop takes the static gradient (guard above) and never reaches this.
     const phoneBackdrop = matchMedia("(max-width: 820px), (max-height: 500px) and (orientation: landscape)");
     const BACKDROP_SNAPSHOT_MS = 500;
     let backdropPainter = null;
@@ -2605,7 +2779,8 @@
       backdropCanvas.hidden = true;
     }
     function attachBackdrop() {
-      if (reduceMotion.matches) return; // static #backdrop-fallback gradient stays instead
+      // Desktop's video already covers its whole player region, so it gets the static gradient.
+      if (reduceMotion.matches || desktopMQ.matches) return;
       if (phoneBackdrop.matches) {
         startBackdropSnapshots();
         return;
@@ -2628,13 +2803,15 @@
       backdropVideo.hidden = true;
       backdropVideo.srcObject = null;
     }
-    // Rotating a phone crosses 820px, which would otherwise hand a phone the desktop live-video
-    // backdrop in landscape — the expensive path, on the weakest GPU.
-    phoneBackdrop.addEventListener("change", () => {
-      if (!hasStream) return;
+    // Crossing either breakpoint live (resize, DevTools, an external monitor, and rotating a
+    // phone, which crosses 820px) should start or stop the backdrop immediately rather than wait
+    // for the next stream event. Both calls are idempotent, so the overlapping queries are safe.
+    function refreshBackdropForBreakpoint() {
       clearBackdrop();
-      attachBackdrop();
-    });
+      if (hasStream) attachBackdrop();
+    }
+    desktopMQ.addEventListener("change", refreshBackdropForBreakpoint);
+    phoneBackdrop.addEventListener("change", refreshBackdropForBreakpoint);
 
     // ---------- Vonage subscribe-only session, with backoff reconnect ----------
     let reconnectDelay = 1000;
@@ -2663,10 +2840,10 @@
           insertMode: "append",
           width: "100%",
           height: "100%",
-          // "contain": the whole picture, never cropped — the desktop stage and the mobile
-          // full-width strip both rely on this rather than fighting Vonage's own inline style
-          // with CSS (the landscape-phone query still forces object-fit:cover for a full-bleed
-          // fill there, which wins there via !important).
+          // "contain": the whole picture, never cropped — this is what mobile portrait actually
+          // shows. Desktop and the landscape-phone drawer both instead force object-fit:cover
+          // via CSS !important (rather than fighting Vonage's own inline style from here), so
+          // mobile portrait is the only mode that still shows the whole frame.
           fitMode: "contain",
           subscribeToAudio: true,
           style: { audioBlockedDisplayMode: "off", buttonDisplayMode: "off", nameDisplayMode: "off" },

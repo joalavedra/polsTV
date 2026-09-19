@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TICKER_ITEM_TTL_MS, TICKER_MAX_ITEMS, Ticker } from "./ticker";
+import { TICKER_COOLDOWN_MS, TICKER_ITEM_TTL_MS, TICKER_MAX_ITEMS, Ticker } from "./ticker";
 
 function setup() {
   let clock = 1_000_000;
@@ -75,5 +75,32 @@ describe("get", () => {
     const item = add("ana");
     expect(ticker.get(item.id)?.uid).toBe("ana");
     expect(ticker.get(99999)).toBeUndefined();
+  });
+});
+
+describe("cooldownSeconds", () => {
+  it("is 0 for a uid that has never added an item", () => {
+    const { ticker } = setup();
+    expect(ticker.cooldownSeconds("ana")).toBe(0);
+  });
+
+  it("is still positive one millisecond before the cooldown elapses", () => {
+    const { ticker, add, tick } = setup();
+    add("ana");
+    tick(TICKER_COOLDOWN_MS - 1);
+    expect(ticker.cooldownSeconds("ana")).toBeGreaterThan(0);
+  });
+
+  it("is 0 exactly at the cooldown boundary", () => {
+    const { ticker, add, tick } = setup();
+    add("ana");
+    tick(TICKER_COOLDOWN_MS);
+    expect(ticker.cooldownSeconds("ana")).toBe(0);
+  });
+
+  it("does not affect a different uid", () => {
+    const { ticker, add } = setup();
+    add("ana");
+    expect(ticker.cooldownSeconds("bob")).toBe(0);
   });
 });
