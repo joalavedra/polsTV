@@ -3,11 +3,13 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DEFAULT_ALLOWED_URL_PATTERNS } from "@fal-ai/server-proxy";
 import { createRouteHandler } from "@fal-ai/server-proxy/hono";
+import { LibSQLStore } from "@mastra/libsql";
 import { Mastra } from "@mastra/core/mastra";
 import { registerApiRoute } from "@mastra/core/server";
 import { z } from "zod";
-import { Channel } from "./channel";
+import { channel } from "./channel";
 import { MAX_IDEA_CHARS, moderate, moderator, sceneWriter, writeSteer } from "./showrunner";
+import { notifySceneChange, showrunner } from "./telegram";
 import { videoAccess } from "./vonage";
 
 const broadcasterSecret = process.env["BROADCASTER_SECRET"];
@@ -15,7 +17,6 @@ if (!broadcasterSecret || broadcasterSecret.length < 32) {
   throw new Error("BROADCASTER_SECRET is missing or short. Set 32+ random chars in .env.");
 }
 
-const channel = new Channel();
 let writingSteer = false;
 
 // Web callers may not claim a "telegram:" uid; those only come from the Telegram channel.
@@ -61,7 +62,10 @@ async function page(file: "index.html" | "broadcaster.html"): Promise<string> {
 }
 
 export const mastra = new Mastra({
-  agents: { moderator, sceneWriter },
+  agents: { moderator, sceneWriter, showrunner },
+  // Channels (Telegram) need storage on the Mastra instance or subscriptions, dedup and approvals
+  // reset on every restart. Also backs the showrunner's per-user memory (docs/cards/mastra-nebius).
+  storage: new LibSQLStore({ id: "mastra-storage", url: "file:./mastra.db" }),
   server: {
     // Hosts inject PORT; parallel dev servers set it to avoid the 4111 default.
     port: Number(process.env["PORT"] ?? 4111),
@@ -162,8 +166,9 @@ export const mastra = new Mastra({
           const body = steerResultBody.safeParse(await c.req.json().catch(() => null));
           if (!body.success) return c.json({ ok: false }, 400);
           if (!body.data.applied) console.warn("director rejected a steer:", body.data.reason);
-          const scene = channel.resolveSteer(body.data.steerId, body.data.applied);
-          return c.json({ ok: true, onAir: scene?.ideaId ?? null });
+          const { onAir, ended } = channel.resolveSteer(body.data.steerId, body.data.applied);
+          void notifySceneChange({ onAir, ended });
+          return c.json({ ok: true, onAir: onAir?.ideaId ?? null });
         },
       }),
 

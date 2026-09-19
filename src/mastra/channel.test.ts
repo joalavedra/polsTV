@@ -49,6 +49,25 @@ describe("queue", () => {
   it("returns undefined when the queue is empty", () => {
     expect(setup().channel.nextIdea()).toBeUndefined();
   });
+
+  it("reports 1-based serving-order position, undefined when not queued", () => {
+    const ctx = setup();
+    air(ctx, "bob", "opening scene");
+    ctx.channel.like("carol"); // bob now has karma, so a later "bob" idea would jump the line
+    ctx.say("ana", "first in");
+    ctx.tick(1);
+    ctx.say("bob", "second in, but has karma");
+    expect(ctx.channel.queuePosition("bob")).toBe(1);
+    expect(ctx.channel.queuePosition("ana")).toBe(2);
+    expect(ctx.channel.queuePosition("nobody")).toBeUndefined();
+  });
+
+  it("looks up a user's own queued idea", () => {
+    const ctx = setup();
+    ctx.say("ana", "a cat");
+    expect(ctx.channel.myIdea("ana")?.text).toBe("a cat");
+    expect(ctx.channel.myIdea("bob")).toBeUndefined();
+  });
 });
 
 describe("steering", () => {
@@ -79,7 +98,8 @@ describe("steering", () => {
     if (!bad.ok) throw new Error("setup failed");
     ctx.tick(STEER_GAP_MS);
     const steer = ctx.channel.beginSteer(bad.idea.id, "p");
-    expect(ctx.channel.resolveSteer(steer.steerId, false)).toBeUndefined();
+    const outcome = ctx.channel.resolveSteer(steer.steerId, false);
+    expect(outcome).toEqual({ onAir: undefined, ended: undefined });
     const status = ctx.channel.status();
     expect(status.now?.text).toBe("a cat");
     expect(status.queue).toHaveLength(0);
@@ -89,8 +109,32 @@ describe("steering", () => {
   it("ignores a result for a steer id that is not in flight", () => {
     const ctx = setup();
     air(ctx, "ana", "a cat");
-    expect(ctx.channel.resolveSteer(9999, true)).toBeUndefined();
+    const outcome = ctx.channel.resolveSteer(9999, true);
+    expect(outcome).toEqual({ onAir: undefined, ended: undefined });
     expect(ctx.channel.status().now?.text).toBe("a cat");
+  });
+
+  it("reports no ended scene when the first-ever idea airs", () => {
+    const ctx = setup();
+    const a = ctx.say("ana", "a cat");
+    if (!a.ok) throw new Error("setup failed");
+    ctx.tick(STEER_GAP_MS);
+    const steer = ctx.channel.beginSteer(a.idea.id, "p");
+    const outcome = ctx.channel.resolveSteer(steer.steerId, true);
+    expect(outcome.onAir?.text).toBe("a cat");
+    expect(outcome.ended).toBeUndefined();
+  });
+
+  it("reports the replaced scene as ended when a new one airs", () => {
+    const ctx = setup();
+    air(ctx, "ana", "a cat");
+    const b = ctx.say("bob", "a dog");
+    if (!b.ok) throw new Error("setup failed");
+    ctx.tick(STEER_GAP_MS);
+    const steer = ctx.channel.beginSteer(b.idea.id, "p");
+    const outcome = ctx.channel.resolveSteer(steer.steerId, true);
+    expect(outcome.onAir?.text).toBe("a dog");
+    expect(outcome.ended?.text).toBe("a cat");
   });
 
   it("refuses to steer an idea that is not queued", () => {
