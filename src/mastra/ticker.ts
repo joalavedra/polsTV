@@ -1,0 +1,77 @@
+/**
+ * The ticker's in-memory item store: images shared via Telegram that scroll along the bottom of
+ * the broadcast picture. Pure and synchronous, clock injected — same style as Channel
+ * (channel.ts).
+ *
+ * ponytail: in-memory only, capped at 12 items; state dies with the process, like channel.ts.
+ */
+
+export type TickerMime = "image/jpeg" | "image/png" | "image/webp";
+
+export interface TickerItem {
+  id: number;
+  uid: string;
+  name: string;
+  caption: string | undefined;
+  mime: TickerMime;
+  bytes: Uint8Array;
+  addedAt: number;
+}
+
+export const TICKER_MAX_ITEMS = 12;
+export const TICKER_ITEM_TTL_MS = 30 * 60 * 1000;
+
+export interface AddTickerItemInput {
+  uid: string;
+  name: string;
+  caption?: string | undefined;
+  mime: TickerMime;
+  bytes: Uint8Array;
+}
+
+export class Ticker {
+  private nextId = 1;
+  private items: TickerItem[] = [];
+
+  constructor(private readonly now: () => number = Date.now) {}
+
+  /**
+   * Adds a new item. A user has at most one active item at a time: a newer accepted image from
+   * the same uid replaces their previous one instead of queueing alongside it. Once there are
+   * more than TICKER_MAX_ITEMS the oldest drops.
+   */
+  add(input: AddTickerItemInput): TickerItem {
+    this.expire();
+    this.items = this.items.filter((item) => item.uid !== input.uid);
+    const item: TickerItem = {
+      id: this.nextId++,
+      addedAt: this.now(),
+      uid: input.uid,
+      name: input.name,
+      caption: input.caption,
+      mime: input.mime,
+      bytes: input.bytes,
+    };
+    this.items.push(item);
+    if (this.items.length > TICKER_MAX_ITEMS) this.items.shift();
+    return item;
+  }
+
+  list(): TickerItem[] {
+    this.expire();
+    return [...this.items];
+  }
+
+  get(id: number): TickerItem | undefined {
+    this.expire();
+    return this.items.find((item) => item.id === id);
+  }
+
+  private expire(): void {
+    const cutoff = this.now() - TICKER_ITEM_TTL_MS;
+    this.items = this.items.filter((item) => item.addedAt > cutoff);
+  }
+}
+
+/** The one shared ticker instance for this process. index.ts and ticker-intake.ts both import it */
+export const ticker = new Ticker();
