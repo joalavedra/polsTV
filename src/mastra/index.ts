@@ -10,6 +10,7 @@ import { z } from "zod";
 import { clip, synthesise } from "./announcer";
 import type { Idea } from "./channel";
 import { channel } from "./channel";
+import { handleEval, type EvalDeps } from "./eval";
 import { livePitchDeps, PITCH_MIN_KARMA, pitchSlot, submitPitch } from "./pitch";
 import type { SteerWriteOutcome } from "./showrunner";
 import { handleSay, type SayDeps, type SayInput } from "./say";
@@ -102,6 +103,10 @@ const pitchBody = z.object({
   uid,
   name: z.string().trim().min(1).max(24),
   brief: z.string().trim().min(1).max(MAX_PITCH_BRIEF_CHARS),
+});
+const evalBody = z.object({
+  name,
+  text: z.string().trim().min(1).max(MAX_IDEA_CHARS),
 });
 const steerResultBody = z.object({
   steerId: z.number().int(),
@@ -237,6 +242,9 @@ const sayDeps: SayDeps = {
   recordModeration: (target, n, t, usage) => spend.recordModeration(target, n, t, usage),
   recordStt: (target, n, t, audioSeconds) => spend.recordStt(target, n, t, audioSeconds),
 };
+
+// No side effects: nothing queued, nothing aired, nothing spent — see eval.ts and docs/CONTRACT.md.
+const evalDeps: EvalDeps = { moderate, writeSteer };
 
 // /say-voice's audio boundary: MediaRecorder clips for a 10 s hold-to-talk cap land well under
 // this; anything smaller than 1 KB is not real speech.
@@ -570,6 +578,20 @@ export const mastra = new Mastra({
           if (!body.data.played) console.warn("pitch clip did not play:", body.data.reason);
           pitchSlot.release(body.data.pitchId);
           return c.json({ ok: true });
+        },
+      }),
+
+      // No queue, no air, no spend: runs moderation and (when accepted) the steering-prompt writer
+      // on one input and returns the result. The Galtea evaluation hook (docs/CONTRACT.md).
+      registerApiRoute("/b/:secret/eval", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          if (!isBroadcaster(c.req.param("secret"))) return c.notFound();
+          const body = evalBody.safeParse(await c.req.json().catch(() => null));
+          if (!body.success) return c.json({ ok: false, reason: "Invalid message." }, 400);
+          const outcome = await handleEval(evalDeps, body.data);
+          return c.json(outcome.body, outcome.status);
         },
       }),
 
