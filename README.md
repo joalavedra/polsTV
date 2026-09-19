@@ -121,15 +121,16 @@ for the moderator.
 
 ### The ticker
 
-A TV-style crawl scrolls along the bottom of the broadcast picture itself, so it appears for every
-viewer and in recordings with no change to the viewer page. Message
+A TV-style crawl scrolls along the bottom of the viewer page (`public/index.html`), fixed to the
+viewport edge, outside the video — it never touches the broadcast picture itself, so it's absent
+from the published stream and from recordings. Message
 [@timesquarescreenbot](https://t.me/timesquarescreenbot) a photo, optionally with a caption, and —
-once it clears moderation — it scrolls in the ticker for 30 minutes. The bot picks the smallest
+once it clears moderation — it scrolls in the ticker for 1 minute. The bot picks the smallest
 Telegram-provided size whose shorter side is at least 240px (never the original), refuses anything
 over 1 MB or not JPEG/PNG/WEBP by magic bytes, and moderates the image on a Nebius vision model
 before it is ever stored; a rejection or a moderation error/timeout both refuse the photo. One
-image per user at a time — a new one replaces the old — and the ticker holds at most 12 items.
-Text messages to the bot are unaffected.
+image per user at a time, at most one per minute — a newer accepted photo still replaces the
+older — and the ticker holds at most 12 items. Text messages to the bot are unaffected.
 
 ## Sponsor tech
 
