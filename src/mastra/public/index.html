@@ -414,6 +414,37 @@
   .toast.show { opacity: 1; transform: translateY(0); }
   @media (prefers-reduced-motion: reduce) { .toast { transition: opacity .2s; transform: none; } }
 
+  /* pitch:start — karma-gated sponsored voice-over. Self-contained, safe to drop in a conflict. */
+  #say-form { flex-wrap: wrap; }
+  #say-input { min-width: 8rem; }
+  #pitch-btn {
+    border-radius: 999px;
+    border: 1px solid var(--panel-border);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: .8rem;
+    font-weight: 700;
+    white-space: nowrap;
+    padding: .55rem .9rem;
+    cursor: pointer;
+  }
+  #pitch-btn.is-locked { opacity: .55; }
+  #pitch-badge { display: block; margin-top: .35rem; }
+  #pitch-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, .88);
+    padding: 1.5rem;
+  }
+  #pitch-hint { margin: 0; font-size: .8rem; color: var(--text-dim); }
+  #toast-region .toast { max-width: min(90vw, 32rem); }
+  /* pitch:end */
+
   #heart-layer { position: fixed; inset: 0; z-index: 6; pointer-events: none; overflow: hidden; }
   .heart-burst {
     position: absolute;
@@ -456,6 +487,9 @@
     <div class="pill caption-bar" id="caption-bar" hidden>
       <span id="caption-text"></span>
     </div>
+    <!-- pitch:start -->
+    <div class="pill caption-bar" id="pitch-badge" hidden></div>
+    <!-- pitch:end -->
   </div>
 
   <div class="top-right">
@@ -514,8 +548,28 @@
       <input id="say-input" type="text" maxlength="280" autocomplete="off"
         placeholder="What should happen next&hellip;">
       <button id="say-btn" type="submit">Say</button>
+      <!-- pitch:start -->
+      <button id="pitch-btn" type="button">3&#9733; to unlock</button>
+      <!-- pitch:end -->
     </form>
   </section>
+
+  <!-- pitch:start -->
+  <div id="pitch-modal" hidden>
+    <form class="modal" id="pitch-form" role="dialog" aria-modal="true"
+      aria-labelledby="pitch-modal-title">
+      <h2 id="pitch-modal-title" style="margin:0;">A word from you</h2>
+      <p id="pitch-hint">The channel's voice reads a short advert over whatever is on air.</p>
+      <label for="pitch-input">What should it sell?</label>
+      <input id="pitch-input" type="text" minlength="1" maxlength="140" required autocomplete="off"
+        placeholder="sell my lemonade stand, aggressively">
+      <div class="modal-actions">
+        <button type="button" id="pitch-cancel">Cancel</button>
+        <button type="submit" id="pitch-submit">Send</button>
+      </div>
+    </form>
+  </div>
+  <!-- pitch:end -->
 
   <div id="splash">
     <div class="splash-card">
@@ -898,6 +952,94 @@
       trySay();
     });
 
+    // pitch:start — karma-gated sponsored voice-over. Self-contained; renderStatus calls
+    // renderPitchBadge, everything else lives here.
+    const PITCH_MIN_KARMA = 3;
+    const ME_POLL_MS = 5000;
+    const pitchBtn = document.getElementById("pitch-btn");
+    const pitchBadge = document.getElementById("pitch-badge");
+    const pitchModal = document.getElementById("pitch-modal");
+    const pitchForm = document.getElementById("pitch-form");
+    const pitchInput = document.getElementById("pitch-input");
+    const pitchCancel = document.getElementById("pitch-cancel");
+    const pitchSubmit = document.getElementById("pitch-submit");
+    let myKarma = 0;
+    let pitchCooldownSeconds = 0;
+
+    function renderPitchButton() {
+      const locked = myKarma < PITCH_MIN_KARMA;
+      pitchBtn.textContent = locked ? `${PITCH_MIN_KARMA}★ to unlock` : "pitch";
+      pitchBtn.classList.toggle("is-locked", locked);
+      pitchBtn.title = locked
+        ? `${PITCH_MIN_KARMA} karma lets you instruct the channel's voice. You have ${myKarma}.`
+        : "Have the channel's voice sell something of yours";
+    }
+
+    function renderPitchBadge(pitch) {
+      pitchBadge.hidden = !pitch;
+      if (pitch) pitchBadge.textContent = `A word from ${pitch.name}`;
+    }
+
+    async function refreshMe() {
+      if (document.hidden) return;
+      try {
+        const res = await fetch(`me?uid=${encodeURIComponent(uid)}`);
+        if (!res.ok) return;
+        const me = await res.json();
+        myKarma = me.karma;
+        pitchCooldownSeconds = me.pitchCooldownSeconds;
+        renderPitchButton();
+      } catch { /* transient network hiccup, next tick retries */ }
+    }
+
+    function openPitchModal() {
+      if (myKarma < PITCH_MIN_KARMA) {
+        const short = PITCH_MIN_KARMA - myKarma;
+        showToast(`${short} more karma unlocks the voice — likes on your scenes are karma.`);
+        return;
+      }
+      if (pitchCooldownSeconds > 0) {
+        showToast(`One pitch every 3 minutes: ${pitchCooldownSeconds}s left.`);
+        return;
+      }
+      if (!getName()) {
+        openNameModal(openPitchModal);
+        return;
+      }
+      pitchModal.hidden = false;
+      pitchInput.focus();
+    }
+
+    async function sendPitch(brief) {
+      pitchSubmit.disabled = true;
+      pitchSubmit.textContent = "writing…";
+      const { status, data } = await postJSONSafe("pitch", { uid, name: getName(), brief });
+      pitchSubmit.disabled = false;
+      pitchSubmit.textContent = "Send";
+      if (status === 200 && data && data.line) {
+        pitchModal.hidden = true;
+        pitchInput.value = "";
+        showToast(data.line);
+      } else if (data && typeof data.reason === "string" && data.reason) {
+        showToast(data.reason);
+      } else {
+        showToast("The voice is busy right now. Try again.");
+      }
+      refreshMe();
+    }
+
+    pitchBtn.addEventListener("click", openPitchModal);
+    pitchCancel.addEventListener("click", () => { pitchModal.hidden = true; });
+    pitchForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const brief = pitchInput.value.trim();
+      if (brief) sendPitch(brief);
+    });
+    renderPitchButton();
+    refreshMe();
+    setInterval(refreshMe, ME_POLL_MS);
+    // pitch:end
+
     // ---------- diff-render helpers ----------
     function syncList(container, items, keyFn, renderFn) {
       const existing = new Map();
@@ -1002,6 +1144,7 @@
       updateVideoVisibility();
       renderLivePill(statusLive);
       renderCaption(status.now);
+      renderPitchBadge(status.pitch); // pitch
       viewerCount.textContent = `${status.viewers} watching`;
       renderSteering(status.steering);
       syncList(railQueue, status.queue, (q) => q.id, renderQueueItem);
