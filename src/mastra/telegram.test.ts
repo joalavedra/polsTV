@@ -389,6 +389,7 @@ describe("routeDirectMessage", () => {
 
   function photoDeps(overrides: Partial<PhotoIntakeDeps> = {}): PhotoIntakeDeps {
     return {
+      cooldownSeconds: () => 0,
       downloadPhoto: vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff])),
       moderateImage: vi.fn(async () => ({
         verdict: { ok: true, reason: "" },
