@@ -104,8 +104,8 @@ documentary. Present tense. Straight-faced, never winking, never explaining the 
 - no real people, brands, products or companies; nothing readable on screen; no URLs
 - never name the viewer, the channel, the idea, the queue, a prompt, or AI
 
-Example. <idea>a clay capybara stirs soup in a 1970s kitchen</idea>
-In a kitchen that time forgot, one capybara stirs toward greatness.
+Example. <idea>a rubber duck runs a laundrette at midnight</idea>
+Under one flickering tube, the duck begins the midnight wash. Nobody has ever collected.
 
 Reply with the line only. No preamble, no quotes, no stage directions.`,
 });
