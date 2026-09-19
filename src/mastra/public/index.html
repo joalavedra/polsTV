@@ -38,6 +38,10 @@
     --accent: #ff4742;
     --radius: 16px;
     --display-font: 'Bungee', 'Arial Black', sans-serif;
+    /* Desktop-only (>820px) layout constants. Unused below that width, so harmless on mobile. */
+    --side-col-w: 380px;
+    --topbar-h: 64px;
+    --rail-btn: 48px;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
@@ -672,6 +676,14 @@
 </head>
 <body>
 
+  <!-- Ambient backdrop: the live picture, heavily blurred/darkened, filling the window behind
+       everything (mobile and desktop alike). #backdrop-fallback is a static dark gradient always
+       underneath (the zero-JS default, and what prefers-reduced-motion or an unreadable stream
+       falls back to); #backdrop-video is only unhidden once a live MediaStream is confirmed
+       readable from the subscriber's own video element. -->
+  <div id="backdrop-fallback" aria-hidden="true"></div>
+  <video id="backdrop-video" muted playsinline aria-hidden="true" hidden></video>
+
   <!-- video-stage wraps the video box and every overlay pinned to it. On desktop these stay
        position:fixed (viewport-relative, so nesting here changes nothing); on mobile they switch
        to position:absolute so they hug the smaller aspect-ratio video box instead of the screen. -->
@@ -681,48 +693,85 @@
       <div id="offair-card" class="pill">
         <p id="offair-text">OFF AIR &mdash; send an idea to wake the channel</p>
       </div>
+
+      <div id="stage-caption" class="chrome" hidden>
+        <p id="stage-steering-line" hidden></p>
+        <p id="stage-caption-head">
+          <span id="stage-caption-name"></span>
+          <span id="stage-caption-karma">&#9733; <span id="stage-caption-karma-n"></span></span>
+        </p>
+        <p id="stage-caption-text"></p>
+        <!-- pitch:start -->
+        <p id="stage-caption-voice" hidden>
+          <span aria-hidden="true">&#128266;</span> <span id="stage-caption-voice-text"></span>
+        </p>
+        <!-- pitch:end -->
+      </div>
     </div>
 
     <div id="heart-layer"></div>
+
+    <div class="top-left chrome">
+      <img class="top-logo" src="assets/logo.jpg" alt="polsTV" width="120" height="68">
+    </div>
 
     <div class="top-center chrome">
       <div class="pill live-pill" id="live-pill">
         <span class="live-dot" aria-hidden="true"></span>
         <span id="live-label">OFF AIR</span>
+        <span id="live-sep" aria-hidden="true">&middot;</span>
+        <span id="live-viewer-count">0 watching</span>
       </div>
-      <div class="pill caption-bar" id="caption-bar" hidden>
-        <span id="caption-line">
-          <span id="caption-name"></span>
-          <span id="caption-karma-badge">&#9733; <span id="caption-karma"></span></span>:
-          <span id="caption-text"></span>
-        </span>
-      </div>
-      <!-- pitch:start -->
-      <div class="pill caption-bar" id="pitch-badge" hidden></div>
-      <!-- pitch:end -->
     </div>
 
-    <div class="top-right">
-      <div class="pill chrome" id="viewer-pill"><span id="viewer-count">0 watching</span></div>
-      <button type="button" class="pill pill-btn chrome" id="mute-btn" aria-pressed="false">mute</button>
+    <div class="top-right chrome">
+      <div class="pill" id="viewer-pill"><span id="viewer-count">0 watching</span></div>
+      <button type="button" class="pill pill-btn" id="mute-btn" aria-pressed="false">mute</button>
       <button type="button" class="pill pill-btn" id="interface-btn" aria-pressed="false">interface</button>
     </div>
 
-    <div class="top-left chrome">
-      <button type="button" class="pill pill-btn" id="spend-pill" aria-haspopup="dialog"
-        aria-expanded="false" aria-controls="spend-popover">$0.00</button>
+    <div id="action-rail" class="chrome">
+      <div class="rail-item" id="rail-avatar-item" hidden>
+        <span id="rail-avatar" class="rail-avatar" aria-hidden="true"></span>
+        <span class="rail-label" id="rail-avatar-karma"></span>
+      </div>
+      <button type="button" class="rail-item" id="like-btn" aria-pressed="false" hidden>
+        <span id="like-heart" class="rail-icon" aria-hidden="true">&#9825;</span>
+        <span id="like-count" class="rail-label">0</span>
+        <span id="like-own-label" class="rail-label" hidden>your scene</span>
+      </button>
+      <button type="button" class="rail-item" id="chat-count-btn" aria-controls="panel">
+        <span class="rail-icon" aria-hidden="true">&#128172;</span>
+        <span class="rail-label" id="chat-count-label">0</span>
+      </button>
+      <!-- pitch:start -->
+      <button type="button" class="rail-item" id="pitch-btn">
+        <span class="rail-icon" aria-hidden="true">&#128226;</span>
+        <span class="rail-label" id="pitch-btn-label">pitch</span>
+      </button>
+      <!-- pitch:end -->
+      <button type="button" class="rail-item" id="share-btn" aria-haspopup="dialog" aria-expanded="false"
+        aria-controls="share-popover">
+        <span class="rail-icon" aria-hidden="true">&#8599;</span>
+        <span class="rail-label">share</span>
+      </button>
+      <button type="button" class="rail-item" id="spend-pill" aria-haspopup="dialog" aria-expanded="false"
+        aria-controls="spend-popover">
+        <span class="rail-icon" id="spend-amount">$0.00</span>
+        <span class="rail-label">spend</span>
+      </button>
+      <button type="button" class="rail-item" id="more-btn" aria-haspopup="dialog" aria-expanded="false"
+        aria-controls="more-sheet" hidden>
+        <span class="rail-icon" aria-hidden="true">&#8943;</span>
+      </button>
     </div>
-
-    <button type="button" class="pill pill-btn" id="like-btn" aria-pressed="false" hidden>
-      <span id="like-heart" aria-hidden="true">&#9825;</span><span id="like-count">0</span>
-      <span id="like-own-label" hidden>your scene</span>
-    </button>
-
-    <button type="button" class="pill pill-btn" id="drawer-btn" aria-expanded="false" aria-controls="panel">chat</button>
   </div>
 
-  <div id="steering-strip" class="chrome" hidden>
-    <span id="steering-strip-text"></span>
+  <div class="chrome" id="share-popover" role="dialog" aria-label="Share polsTV" hidden>
+    <button type="button" id="share-copy">Copy link</button>
+    <a id="share-telegram" href="https://t.me/timesquarescreenbot" target="_blank" rel="noopener">
+      Open in Telegram
+    </a>
   </div>
 
   <div class="chrome" id="spend-popover" role="dialog" aria-label="Spend estimate" hidden>
@@ -738,7 +787,8 @@
     <div id="spend-scenes"></div>
   </div>
 
-  <aside id="rail" class="chrome" aria-label="Steering and queue">
+  <aside id="rail" class="chrome" aria-label="Up next">
+    <h2 class="rail-eyebrow">Up next</h2>
     <section>
       <h2>Steering now</h2>
       <div id="steering-body"></div>
@@ -749,7 +799,10 @@
     </section>
   </aside>
 
+  <div class="chrome" id="sheet-backdrop" hidden></div>
+
   <section id="panel" class="chrome" aria-label="Chat and rank">
+    <div id="sheet-handle" aria-hidden="true"></div>
     <button type="button" id="drawer-close" aria-label="Close panel">&times;</button>
     <div class="tablist" role="tablist" aria-label="Panel views">
       <button type="button" class="tab tab-default" role="tab" id="tab-chat" aria-controls="pane-chat"
@@ -765,18 +818,16 @@
       <div id="pane-rank" class="pane" role="tabpanel" aria-labelledby="tab-rank" hidden></div>
     </div>
     <div class="you-chip" id="you-chip" hidden>you <span class="q-karma">&#9733; <span id="you-karma">0</span></span></div>
-    <form id="say-form">
-      <label for="say-input" class="sr-only" style="position:absolute;left:-9999px;">
-        What should happen next
-      </label>
-      <input id="say-input" type="text" maxlength="280" autocomplete="off"
-        placeholder="What should happen next&hellip;">
-      <button id="say-btn" type="submit">Say</button>
-      <!-- pitch:start -->
-      <button id="pitch-btn" type="button">3&#9733; to unlock</button>
-      <!-- pitch:end -->
-    </form>
   </section>
+
+  <form id="say-form">
+    <label for="say-input" class="sr-only" style="position:absolute;left:-9999px;">
+      What should happen next
+    </label>
+    <input id="say-input" type="text" maxlength="280" autocomplete="off"
+      placeholder="What should happen next&hellip;">
+    <button id="say-btn" type="submit">Say</button>
+  </form>
 
   <!-- pitch:start -->
   <div id="pitch-modal" hidden>
@@ -795,13 +846,39 @@
   </div>
   <!-- pitch:end -->
 
+  <!-- Mobile-only overflow sheet: spend, pitch, pure-TV and the Telegram link, kept off the
+       always-visible mobile chrome so the top bar and input row stay minimal. -->
+  <div id="more-sheet" hidden>
+    <div id="more-sheet-backdrop"></div>
+    <div class="sheet-panel" role="dialog" aria-modal="true" aria-label="More">
+      <div id="more-sheet-handle" aria-hidden="true"></div>
+      <!-- pitch:start -->
+      <button type="button" class="sheet-row" id="more-pitch-btn">
+        <span>Pitch</span><span class="sheet-row-value" id="more-pitch-state">3&#9733; to unlock</span>
+      </button>
+      <!-- pitch:end -->
+      <button type="button" class="sheet-row" id="more-spend-btn" aria-haspopup="dialog"
+        aria-controls="spend-popover">
+        <span>Spend</span><span class="sheet-row-value" id="more-spend-total">$0.00</span>
+      </button>
+      <button type="button" class="sheet-row" id="more-interface-btn" aria-pressed="false">
+        <span>Pure TV</span>
+      </button>
+      <a class="sheet-row" href="https://t.me/timesquarescreenbot" target="_blank" rel="noopener">
+        <span>Open in Telegram</span>
+      </a>
+      <button type="button" class="sheet-row sheet-close" id="more-close">Close</button>
+    </div>
+  </div>
+
   <div id="splash">
     <div class="splash-card">
       <img class="splash-logo" src="assets/logo.jpg" width="960" height="540" alt="polsTV, slop television">
       <div class="wordmark" id="splash-wordmark" hidden></div>
-      <p>one shared AI channel, live right now</p>
-      <p>type an idea &mdash; the scene on air morphs into it</p>
-      <p>tap the video to like; likes are karma for whoever prompted it</p>
+      <p class="chrome">one shared AI channel, live right now</p>
+      <p class="chrome">type an idea &mdash; the scene on air morphs into it</p>
+      <p class="chrome">tap the video to like; likes are karma for whoever prompted it</p>
+      <p class="splash-line-mobile">One shared AI channel. Say what happens next.</p>
       <button type="button" id="splash-tap">tap to tune in</button>
     </div>
   </div>
