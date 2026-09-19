@@ -999,49 +999,42 @@
   body.chrome-hidden #stage-caption, body.chrome-hidden #say-form,
   body.chrome-hidden #sheet-backdrop, body.chrome-hidden #mute-btn { display: none; }
 
-  /* ================= Desktop (>820px wide, >500px tall) ================= */
+  /* ================= Desktop (>820px wide, >500px tall): the picture fills the whole viewport
+     minus the side column, edge to edge, with every control overlaid on top of it. ================= */
   @media (min-width: 821px) and (min-height: 501px) {
     body { overflow: hidden; }
 
     #video-stage {
       position: fixed;
-      top: var(--topbar-h);
-      left: 0;
-      right: calc(var(--side-col-w) + 112px);
-      bottom: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-    }
-    #video-wrap {
-      position: relative;
-      top: auto;
-      left: auto;
-      transform: none;
-      flex: none;
-      width: min(100%, 1280px, calc((100vh - var(--topbar-h) - 32px) * 16 / 9));
-      aspect-ratio: 16 / 9;
-      border-radius: 16px;
-      box-shadow: 0 24px 64px rgba(0, 0, 0, .55);
-    }
-    #subscriber-container { border-radius: inherit; }
-    #heart-layer { position: fixed; inset: 0; }
-    #offair-card { border-radius: 12px; }
-    #stage-caption { border-radius: 0 0 16px 16px; padding-right: 24px; }
-
-    /* Pure TV grows the stage to the full window (backdrop stays), hides everything else, and
-       leaves only the small fading restore control (see the shared chrome-hidden rules above). */
-    body.chrome-hidden #video-stage {
-      right: 0;
       top: 0;
-      padding: 0;
+      left: 0;
+      right: var(--side-col-w);
+      bottom: var(--ticker-h, 0px);
     }
-    body.chrome-hidden #video-wrap {
-      width: min(100vw, calc(100vh * 16 / 9));
-      border-radius: 0;
-      box-shadow: none;
+    #video-wrap { position: absolute; inset: 0; }
+    /* Vonage's subscriber is created with fitMode:"contain" for every breakpoint (see the JS);
+       override to cover here with CSS !important rather than changing that option, exactly like
+       the landscape-phone drawer already does, so mobile portrait keeps showing the whole frame. */
+    #subscriber-container video, #subscriber-container object { object-fit: cover !important; }
+    #offair-card { border-radius: 12px; }
+    #stage-caption { padding-right: calc(24px + var(--rail-btn) + 16px); }
+
+    /* Top gradient so the top bar's pills stay legible over any picture underneath them. */
+    #video-stage::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 140px;
+      background: linear-gradient(to bottom, rgba(0, 0, 0, .5), transparent);
+      pointer-events: none;
+      z-index: 2;
     }
+
+    /* Pure TV: the side column goes too and the video takes the full window (still clear of the
+       ticker — see body.chrome-hidden's shared hide-list above for the rest of the chrome). */
+    body.chrome-hidden #video-stage { right: 0; }
 
     /* ---- Top bar ---- */
     .top-left {
@@ -1050,6 +1043,9 @@
       position: fixed;
       top: 14px;
       left: 20px;
+      /* Missing before: with the video now reaching top:0, its z-index:1 painted over this
+         corner unless given a stacking order of its own (.top-center/.top-right already had one). */
+      z-index: 10;
     }
     .top-logo { display: block; height: 36px; width: auto; border-radius: 8px; }
     .top-center { top: 14px; left: 68px; max-width: 40vw; }
@@ -1058,17 +1054,32 @@
     #viewer-pill { display: inline-flex; }
     #interface-btn { display: inline-flex; }
 
-    /* ---- Action rail: beside the stage, bottom-aligned with it ---- */
-    #action-rail { right: calc(var(--side-col-w) + 24px); bottom: 48px; gap: 20px; }
+    /* ---- Action rail: overlays the video's right edge, vertically centred-low, TikTok-style ---- */
+    #action-rail {
+      right: calc(var(--side-col-w) + 24px);
+      top: 58%;
+      bottom: auto;
+      transform: translateY(-50%);
+      gap: 20px;
+    }
+    /* Subtle dark scrim behind the icon column so white icons read over any picture. */
+    #action-rail::before {
+      content: "";
+      position: absolute;
+      inset: -24px -20px;
+      z-index: -1;
+      background: radial-gradient(60% 100% at 100% 50%, rgba(0, 0, 0, .4), transparent 70%);
+      pointer-events: none;
+    }
     #more-btn { display: none; }
     #pitch-btn, #spend-pill { display: flex; }
 
-    /* Popovers open beside the rail button that triggers them. */
+    /* Popovers open to the left of the rail, clear of both the side column and the viewport. */
     #spend-popover, #share-popover {
       left: auto;
       top: auto;
       right: calc(var(--side-col-w) + 24px + var(--rail-btn) + 12px);
-      bottom: 24px;
+      bottom: 20vh;
     }
 
     /* ---- Side column: "Up next" stacked above the persistent chat/rank panel ---- */
@@ -1077,7 +1088,7 @@
       left: auto;
       right: 0;
       top: calc(var(--topbar-h) + 34vh);
-      bottom: 0;
+      bottom: var(--ticker-h, 0px);
       height: auto;
       width: var(--side-col-w);
       border-radius: 0;
@@ -1111,7 +1122,7 @@
     #say-form {
       left: auto;
       right: 0;
-      bottom: 0;
+      bottom: var(--ticker-h, 0px);
       width: var(--side-col-w);
       background: rgba(0, 0, 0, .2);
       border-top: 1px solid var(--panel-border);
@@ -1119,17 +1130,10 @@
     .you-chip { display: block; }
   }
 
-  /* Narrow desktop (821-1100px): side column narrows and the rail overlays the stage's own
-     right edge instead of sitting beside it, so the picture stays as large as possible. */
+  /* Narrow desktop (821-1100px): only the side column narrows, so the picture stays as large as
+     possible. Everything above keys off --side-col-w already, so nothing else needs overriding. */
   @media (min-width: 821px) and (max-width: 1100px) and (min-height: 501px) {
     :root { --side-col-w: 320px; }
-    #video-stage { right: var(--side-col-w); }
-    #action-rail { right: calc(var(--side-col-w) + 12px); bottom: 24px; }
-    body.chrome-hidden #action-rail { right: 24px; }
-    #spend-popover, #share-popover { right: calc(var(--side-col-w) + 12px + var(--rail-btn) + 12px); }
-    /* The rail overlays the stage here (unlike the wide band, which reserves space beside it),
-       so the caption needs its wider clearance back to stay clear of the rail's buttons. */
-    #stage-caption { padding-right: 88px; }
   }
 </style>
 </head>
@@ -2518,10 +2522,14 @@
     }
 
     // ---------- ambient backdrop: same MediaStream as the subscriber's <video>, heavily
-    // blurred via CSS. Never a second Vonage subscription — just reads the existing element. ----------
+    // blurred via CSS. Never a second Vonage subscription — just reads the existing element.
+    // Desktop's video already covers the whole player region edge to edge, so the backdrop
+    // would only ever decode the same stream a second time for a picture no one can see —
+    // skip feeding it there; mobile keeps it as its background. ----------
     const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+    const desktopMQ = matchMedia("(min-width: 821px) and (min-height: 501px)");
     function attachBackdrop() {
-      if (reduceMotion.matches) return; // static #backdrop-fallback gradient stays instead
+      if (reduceMotion.matches || desktopMQ.matches) return; // static #backdrop-fallback stays instead
       try {
         const video = subscriberContainer.querySelector("video");
         const stream = video && video.srcObject;
@@ -2539,6 +2547,9 @@
       backdropVideo.hidden = true;
       backdropVideo.srcObject = null;
     }
+    // Crossing the desktop breakpoint live (resize, DevTools, an external monitor) should start
+    // or stop feeding the backdrop immediately, not wait for the next stream event.
+    desktopMQ.addEventListener("change", (event) => (event.matches ? clearBackdrop() : attachBackdrop()));
 
     // ---------- Vonage subscribe-only session, with backoff reconnect ----------
     let reconnectDelay = 1000;
@@ -2567,10 +2578,10 @@
           insertMode: "append",
           width: "100%",
           height: "100%",
-          // "contain": the whole picture, never cropped — the desktop stage and the mobile
-          // full-width strip both rely on this rather than fighting Vonage's own inline style
-          // with CSS (the landscape-phone query still forces object-fit:cover for a full-bleed
-          // fill there, which wins there via !important).
+          // "contain": the whole picture, never cropped — this is what mobile portrait actually
+          // shows. Desktop and the landscape-phone drawer both instead force object-fit:cover
+          // via CSS !important (rather than fighting Vonage's own inline style from here), so
+          // mobile portrait is the only mode that still shows the whole frame.
           fitMode: "contain",
           subscribeToAudio: true,
           style: { audioBlockedDisplayMode: "off", buttonDisplayMode: "off", nameDisplayMode: "off" },
