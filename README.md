@@ -1,12 +1,15 @@
 # polsTV
 
-One shared, never-cutting AI TV channel that everyone watches at once. Viewers send a one-line idea
+<img width="1792" height="1008" alt="grok-image-9c55a3c0-56fd-4298-a939-11ca1bcac10c" src="https://github.com/user-attachments/assets/75b9e6de-d8f0-4aa0-b83c-07dfddd01bba" />
+
+Twitch meets community AI channel, polsTB. 
+
+Viewers send a one-line idea
 from the web page or by texting the Telegram bot [@timesquarescreenbot](https://t.me/timesquarescreenbot);
 the live shot morphs into each idea without a cut. Tap the screen to like a scene — likes are karma for
 whoever prompted it. Built in one weekend at HackBarna AI Summit 26 (Barcelona, 19–20 Sep 2026).
 
-Who it's for: anyone who wants to watch and steer one shared AI-generated channel together, live,
-instead of prompting a video model alone.
+Who it's for: Useful for digital first streamings like Twitch and Youtube to keep audiences interactive, bars and pubs as background and a draw for younger crowds, and some retail environments, gyms, and waiting areas.
 
 ## How it works
 
