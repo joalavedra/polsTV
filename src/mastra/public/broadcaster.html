@@ -1,0 +1,734 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>polsTV broadcaster</title>
+<script src="https://video.standard.vonage.com/v2/js/opentok.min.js"></script>
+<style>
+  body {
+    margin: 0;
+    background: #111;
+    color: #ddd;
+    font: 13px/1.4 system-ui, sans-serif;
+  }
+  #layout {
+    display: flex;
+    gap: 16px;
+    padding: 16px;
+  }
+  #stage {
+    width: 640px;
+    height: 360px;
+    background: #000;
+    border: 1px solid #333;
+  }
+  #panel {
+    flex: 1;
+    min-width: 260px;
+  }
+  dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    margin: 0 0 12px;
+  }
+  dt {
+    color: #888;
+  }
+  dd {
+    margin: 0;
+    font-family: monospace;
+  }
+  button {
+    font: inherit;
+    padding: 6px 14px;
+    margin-right: 8px;
+    cursor: pointer;
+  }
+  #log {
+    margin-top: 12px;
+    height: 320px;
+    overflow-y: auto;
+    background: #000;
+    border: 1px solid #333;
+    padding: 6px;
+    font-family: monospace;
+    font-size: 11px;
+    white-space: pre-wrap;
+  }
+  #error {
+    color: #f66;
+    font-weight: bold;
+  }
+  .offscreen {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+</style>
+<div id="layout">
+  <canvas id="stage" width="1280" height="720"></canvas>
+  <div id="panel">
+    <div id="error" hidden></div>
+    <button id="startBtn">Start</button>
+    <button id="stopBtn">Stop Director</button>
+    <dl>
+      <dt>state</dt>
+      <dd id="state">-</dd>
+      <dt>session age</dt>
+      <dd id="sessionAge">-</dd>
+      <dt>steer latency</dt>
+      <dd id="steerLatency">-</dd>
+      <dt>vonage</dt>
+      <dd id="vonageState">-</dd>
+    </dl>
+    <div id="log"></div>
+  </div>
+</div>
+<script type="module">
+  // Broadcaster: the only tab that talks to fal Director over WebRTC and republishes into
+  // Vonage. See PLAN.md §3, docs/cards/director.md, docs/cards/vonage.md, docs/CONTRACT.md.
+  //
+  // MONEY RULE: fal.realtime.open()/fal-proxy are reached only from openDirectorSession() and
+  // rotateSession(), and both are only ever called when state.directorOff is false. Every manual
+  // test in this repo must run with ?director=off.
+
+  const els = {
+    stage: document.getElementById("stage"),
+    error: document.getElementById("error"),
+    startBtn: document.getElementById("startBtn"),
+    stopBtn: document.getElementById("stopBtn"),
+    state: document.getElementById("state"),
+    sessionAge: document.getElementById("sessionAge"),
+    steerLatency: document.getElementById("steerLatency"),
+    vonageState: document.getElementById("vonageState"),
+    log: document.getElementById("log"),
+  };
+
+  const state = {
+    secret: null,
+    directorOff: false,
+    started: false,
+    phase: "IDENT",
+    lastSeenSteerId: undefined,
+    lastLatencyMs: undefined,
+    steerSentAt: new Map(), // steerId -> Date.now() when we acted on it
+    steerPollBusy: false,
+    idlePollBusy: false,
+    opens: [], // timestamps of session opens, for the 3-per-10-min guard
+    ident: { lastPrompt: undefined },
+    idle: { queueEmptySince: null },
+    announcer: { played: new Set() }, // steerIds whose clip we've already played
+    render: { identTimer: undefined },
+    audio: { ctx: undefined, destination: undefined, directorGain: undefined },
+    videoTrack: undefined,
+    audioTrack: undefined,
+    vonage: { session: undefined, publisher: undefined, publishing: false, reconnectAttempts: 0 },
+    director: {
+      session: undefined,
+      fal: undefined,
+      video: undefined,
+      activeVideo: undefined,
+      promptVersion: 0,
+      versionToSteerId: new Map(),
+      pendingSteerId: undefined,
+      openedAt: undefined,
+      maxSessionSeconds: undefined,
+      rotateTriggered: false,
+      stopping: false,
+      onLiveOnce: undefined,
+    },
+  };
+
+  // ---- logging + operator UI --------------------------------------------------------------
+
+  function log(type, data) {
+    const time = new Date().toISOString().slice(11, 19);
+    const line = `${time} ${type} ${JSON.stringify(data ?? {})}`;
+    const row = document.createElement("div");
+    row.textContent = line;
+    els.log.appendChild(row);
+    while (els.log.childElementCount > 50) els.log.removeChild(els.log.firstChild);
+    els.log.scrollTop = els.log.scrollHeight;
+  }
+
+  function setPhase(phase) {
+    state.phase = phase;
+    els.state.textContent = phase;
+  }
+
+  function showFatalError(message) {
+    els.error.textContent = message;
+    els.error.hidden = false;
+    setPhase("ERROR");
+  }
+
+  function updateOperatorUi() {
+    const d = state.director;
+    els.sessionAge.textContent = d.openedAt
+      ? `${Math.round((Date.now() - d.openedAt) / 1000)}s`
+      : "-";
+    els.steerLatency.textContent =
+      state.lastLatencyMs !== undefined ? `${state.lastLatencyMs}ms` : "-";
+    els.vonageState.textContent = state.vonage.publishing ? "publishing" : "not publishing";
+  }
+
+  // ---- canvas pipeline: ident card or Director video, always publishing ------------------
+
+  function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+    const words = text.split(" ");
+    let line = "";
+    let lines = [];
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (ctx.measureText(candidate).width > maxWidth && line) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = candidate;
+      }
+    }
+    if (line) lines.push(line);
+    lines = lines.slice(0, 3);
+    lines.forEach((l, i) => ctx.fillText(l, x, y + i * lineHeight));
+  }
+
+  function drawIdentFrame() {
+    const ctx = els.stage.getContext("2d");
+    const w = els.stage.width;
+    const h = els.stage.height;
+    ctx.fillStyle = "#0a0a0f";
+    ctx.fillRect(0, 0, w, h);
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#e8e8f0";
+    ctx.font = "bold 72px system-ui, sans-serif";
+    ctx.fillText("polsTV", w / 2, h / 2 - 40);
+    ctx.font = "28px system-ui, sans-serif";
+    ctx.fillStyle = "#8888a0";
+    ctx.fillText("send an idea to wake the channel", w / 2, h / 2 + 20);
+    ctx.font = "22px monospace";
+    ctx.fillText(new Date().toLocaleTimeString(), w / 2, h / 2 + 70);
+    if (state.ident.lastPrompt) {
+      ctx.font = "18px monospace";
+      ctx.fillStyle = "#55dd88";
+      wrapText(ctx, state.ident.lastPrompt, w / 2, h - 100, w - 160, 24);
+    }
+    const t = Date.now() / 1000;
+    const x = w / 2 + Math.sin(t) * (w / 2 - 60);
+    ctx.beginPath();
+    ctx.arc(x, h - 140, 10, 0, Math.PI * 2);
+    ctx.fillStyle = "#ff5566";
+    ctx.fill();
+  }
+
+  function startIdentLoop() {
+    if (state.render.identTimer) return;
+    state.render.identTimer = setInterval(drawIdentFrame, 1000 / 24);
+  }
+
+  function stopIdentLoop() {
+    clearInterval(state.render.identTimer);
+    state.render.identTimer = undefined;
+  }
+
+  function drawDirectorFrame(video) {
+    const ctx = els.stage.getContext("2d");
+    ctx.drawImage(video, 0, 0, els.stage.width, els.stage.height);
+  }
+
+  function scheduleDirectorFrame(video) {
+    const draw = () => {
+      if (state.director.activeVideo !== video) return; // superseded (rotation/teardown), stop
+      drawDirectorFrame(video);
+      if ("requestVideoFrameCallback" in video) video.requestVideoFrameCallback(draw);
+      else requestAnimationFrame(draw);
+    };
+    draw();
+  }
+
+  /** Swap which source the canvas draws from. undefined means "back to the ident card". */
+  function setActiveVideo(video) {
+    state.director.activeVideo = video;
+    if (video) {
+      stopIdentLoop();
+      scheduleDirectorFrame(video);
+    } else {
+      startIdentLoop();
+    }
+  }
+
+  function grabCanvasBlob() {
+    return new Promise((resolve) => els.stage.toBlob(resolve, "image/jpeg", 0.85));
+  }
+
+  // ---- audio graph: always exists once started, Director's track feeds in via a gain node ---
+
+  function setupAudioGraph() {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const destination = ctx.createMediaStreamDestination();
+    const directorGain = ctx.createGain();
+    directorGain.gain.value = 1;
+    directorGain.connect(destination);
+    state.audio = { ctx, destination, directorGain };
+    ctx.resume().catch((e) => log("audio_resume_failed", { message: String(e) }));
+    ctx.addEventListener("statechange", () => log("audio_context_state", { state: ctx.state }));
+    setTimeout(() => {
+      if (ctx.state === "suspended") log("audio_context_suspended", {});
+    }, 500);
+  }
+
+  // ---- announcer: TTS clip mixed into the same published audio destination ----------------
+
+  function duckDirectorGain(target) {
+    const gain = state.audio.directorGain.gain;
+    const now = state.audio.ctx.currentTime;
+    gain.cancelScheduledValues(now);
+    gain.linearRampToValueAtTime(target, now + 0.2);
+  }
+
+  /** Fetch, decode and play one steer's announcer clip. Never fatal: logs and skips on failure. */
+  async function playAnnouncer(url, steerId) {
+    if (!url || state.announcer.played.has(steerId)) return;
+    state.announcer.played.add(steerId);
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${url} -> ${res.status}`);
+      const bytes = await res.arrayBuffer();
+      const buffer = await state.audio.ctx.decodeAudioData(bytes);
+      const source = state.audio.ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(state.audio.destination);
+      duckDirectorGain(0.3);
+      source.onended = () => duckDirectorGain(1.0);
+      source.start();
+      log("announcer_playing", { steerId });
+    } catch (e) {
+      log("announcer_failed", { steerId, message: String(e) });
+    }
+  }
+
+  // ---- Vonage: publish the canvas + mixed audio, subscribe to nothing ---------------------
+
+  async function fetchJson(url, init) {
+    const res = await fetch(url, init);
+    if (!res.ok) throw new Error(`${url} -> ${res.status}`);
+    return res.json();
+  }
+
+  // A track sourced from a SUSPENDED AudioContext breaks the whole publish (video included),
+  // not just the audio (measured in headless Chrome). Publish video-only until the context is
+  // confirmed running rather than risk losing the stream over a silent audio track.
+  // ponytail: doesn't hot-swap audio into an already-live publish once the context later resumes;
+  // upgrade path is publisher.publishAudio()/a republish if that ever matters for the demo.
+  function publishToVonage(session) {
+    const audioReady = state.audio.ctx.state === "running";
+    if (!audioReady) log("vonage_publish_video_only", { audioState: state.audio.ctx.state });
+    // No target element: OT rejects one when insertDefaultUI is false (verified in Chrome).
+    const publisher = OT.initPublisher(
+      {
+        insertDefaultUI: false,
+        videoSource: state.videoTrack,
+        audioSource: audioReady ? state.audioTrack : false,
+        width: "100%",
+        height: "100%",
+      },
+      (error) => {
+        if (error) log("vonage_publish_init_failed", { message: error.message });
+      },
+    );
+    state.vonage.publisher = publisher;
+    session.publish(publisher, (error) => {
+      if (error) {
+        state.vonage.publishing = false;
+        log("vonage_publish_failed", { message: error.message });
+      } else {
+        state.vonage.publishing = true;
+        log("vonage_publishing", {});
+      }
+    });
+  }
+
+  function scheduleVonageReconnect() {
+    const attempt = ++state.vonage.reconnectAttempts;
+    const delay = Math.min(30_000, 1000 * 2 ** attempt);
+    log("vonage_reconnect_scheduled", { attempt, delay });
+    setTimeout(connectVonage, delay);
+  }
+
+  async function connectVonage() {
+    let token;
+    try {
+      token = await fetchJson(`/b/${state.secret}/publisher-token`);
+    } catch (e) {
+      log("vonage_token_failed", { message: String(e) });
+      return scheduleVonageReconnect();
+    }
+    const session = OT.initSession(token.applicationId, token.sessionId);
+    state.vonage.session = session;
+    session.on("sessionDisconnected", () => {
+      log("vonage_disconnected", {});
+      state.vonage.publisher = undefined;
+      state.vonage.publishing = false;
+      scheduleVonageReconnect();
+    });
+    session.connect(token.token, (error) => {
+      if (error) {
+        log("vonage_connect_failed", { message: error.message });
+        return scheduleVonageReconnect();
+      }
+      state.vonage.reconnectAttempts = 0;
+      publishToVonage(session);
+    });
+  }
+
+  // ---- Director session lifecycle ----------------------------------------------------------
+
+  function canOpenSession() {
+    const cutoff = Date.now() - 10 * 60 * 1000;
+    state.opens = state.opens.filter((t) => t > cutoff);
+    return state.opens.length < 3;
+  }
+
+  function teardownDirectorSession(phase) {
+    const d = state.director;
+    if (d.session) {
+      try {
+        d.session.close();
+      } catch {
+        // already closing; nothing to do
+      }
+    }
+    d.session = undefined;
+    d.fal = undefined;
+    d.video = undefined;
+    d.openedAt = undefined;
+    d.maxSessionSeconds = undefined;
+    d.rotateTriggered = false;
+    d.versionToSteerId = new Map();
+    d.pendingSteerId = undefined;
+    d.stopping = false;
+    setActiveVideo(undefined);
+    setPhase(phase);
+  }
+
+  function stopDirectorDeliberately() {
+    const d = state.director;
+    if (!d.session) return;
+    d.stopping = true;
+    try {
+      d.session.send({ type: "stop" });
+    } catch {
+      // session already dead
+    }
+    log("director_stop_sent", {});
+    teardownDirectorSession("IDENT");
+  }
+
+  async function reportSteerResult(steerId, applied, reason) {
+    const sentAt = state.steerSentAt.get(steerId);
+    if (applied && sentAt) state.lastLatencyMs = Date.now() - sentAt;
+    state.steerSentAt.delete(steerId);
+    try {
+      await fetch(`/b/${state.secret}/steer-result`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          steerId,
+          applied,
+          ...(reason ? { reason: String(reason).slice(0, 200) } : {}),
+        }),
+      });
+    } catch (e) {
+      log("steer_result_failed", { message: String(e) });
+    }
+    log("steer_resolved", { steerId, applied, reason });
+  }
+
+  function resolveSteerFromVersion(version, applied, reason) {
+    const d = state.director;
+    const steerId = d.versionToSteerId.get(version) ?? d.pendingSteerId;
+    if (steerId === undefined) return;
+    d.versionToSteerId.delete(version);
+    if (d.pendingSteerId === steerId) d.pendingSteerId = undefined;
+    reportSteerResult(steerId, applied, reason);
+  }
+
+  function handleDirectorFatalError(msg) {
+    log("director_error", { code: msg.code });
+    const steerId = state.director.pendingSteerId;
+    if (steerId !== undefined) {
+      state.director.pendingSteerId = undefined;
+      reportSteerResult(steerId, false, msg.code);
+    }
+    teardownDirectorSession("ERROR");
+  }
+
+  function handleDirectorData(raw) {
+    let msg;
+    try {
+      msg = JSON.parse(raw);
+    } catch {
+      return log("director_data_unparsed", { raw: String(raw).slice(0, 200) });
+    }
+    log(`director:${msg.type}`, { msg: JSON.stringify(msg).slice(0, 300) });
+    if (msg.type === "session_info" && typeof msg.max_session_seconds === "number") {
+      state.director.maxSessionSeconds = msg.max_session_seconds;
+    }
+    if (msg.type === "prompt_applied") resolveSteerFromVersion(msg.prompt_version, true);
+    if (msg.type === "prompt_rejected") {
+      resolveSteerFromVersion(msg.prompt_version, false, msg.reason);
+    }
+    if (msg.type === "error") handleDirectorFatalError(msg);
+  }
+
+  function handleDirectorSdkError(error) {
+    const message = String(error?.message ?? error);
+    log("director_sdk_error", { message });
+    // Benign after a deliberate {type:"stop"} (docs/cards/director.md, spike results).
+    if (state.director.stopping && message.includes("control data channel closed")) return;
+    const steerId = state.director.pendingSteerId;
+    if (steerId !== undefined) {
+      state.director.pendingSteerId = undefined;
+      reportSteerResult(steerId, false, "sdk_error");
+    }
+    teardownDirectorSession("ERROR");
+  }
+
+  function attachDirectorMedia(stream, video) {
+    video.srcObject = stream;
+    const audioTracks = stream.getAudioTracks();
+    if (audioTracks.length && state.audio.ctx) {
+      const src = state.audio.ctx.createMediaStreamSource(new MediaStream(audioTracks));
+      src.connect(state.audio.directorGain);
+    }
+    video.addEventListener(
+      "playing",
+      () => {
+        setActiveVideo(video);
+        setPhase("LIVE");
+        log("director_playing", { w: video.videoWidth, h: video.videoHeight });
+        state.director.onLiveOnce?.();
+        state.director.onLiveOnce = undefined;
+      },
+      { once: true },
+    );
+  }
+
+  /**
+   * Open a new Director session. `extra.imageUrl` seeds it for a rotation handover;
+   * `extra.onLive` fires once the new video starts playing (rotation uses it to stop the old
+   * session). `steerId` is undefined for a rotation open (nothing to report back for it).
+   */
+  async function openDirectorSession(prompt, steerId, extra = {}) {
+    if (!canOpenSession()) {
+      log("director_open_blocked", { reason: "rate_limit" });
+      return setPhase("ERROR");
+    }
+    state.opens.push(Date.now());
+    if (!extra.imageUrl) setPhase("OPENING");
+    const { createFalClient } = await import("https://esm.sh/@fal-ai/client@1.11.0-alpha.3");
+    const { wma } = await import("https://esm.sh/@fal-ai/client@1.11.0-alpha.3/realtime");
+    const fal = createFalClient({ proxyUrl: `/b/${state.secret}/fal-proxy` });
+    const video = document.createElement("video");
+    video.autoplay = true;
+    video.playsInline = true;
+    video.muted = true;
+    video.className = "offscreen";
+    document.body.appendChild(video);
+
+    const d = state.director;
+    d.fal = fal;
+    d.video = video;
+    d.promptVersion = 1;
+    d.versionToSteerId = steerId === undefined ? new Map() : new Map([[1, steerId]]);
+    d.pendingSteerId = steerId;
+    d.maxSessionSeconds = undefined;
+    d.openedAt = Date.now();
+    d.rotateTriggered = false;
+    d.stopping = false;
+    d.onLiveOnce = extra.onLive;
+    d.session = fal.realtime.open(wma("minimax/h3-max/director"), {
+      receive: ["video", "audio"],
+      onState: (s) => log("director_state", { state: s }),
+      onError: handleDirectorSdkError,
+      onMedia: (stream) => attachDirectorMedia(stream, video),
+      onData: handleDirectorData,
+    });
+    d.session.send({
+      type: "configure",
+      protocol_version: 1,
+      prompt_version: 1,
+      prompt,
+      resolution: "768p",
+      aspect_ratio: "16:9",
+      memory: 12,
+      ...(extra.imageUrl ? { image_url: extra.imageUrl } : {}),
+    });
+    log("configure_sent", { steerId, rotation: Boolean(extra.imageUrl) });
+  }
+
+  function sendSteer(prompt, steerId) {
+    const d = state.director;
+    d.promptVersion += 1;
+    d.versionToSteerId.set(d.promptVersion, steerId);
+    d.pendingSteerId = steerId;
+    d.session.send({ type: "prompt", prompt, prompt_version: d.promptVersion });
+    log("prompt_sent", { steerId, version: d.promptVersion });
+  }
+
+  // ponytail: during the rotation overlap, state.director briefly describes the NEW session
+  // while the OLD one (still on screen via activeVideo) can still emit late messages that get
+  // attributed to the new session's bookkeeping. Acceptable for a hackathon; a dual-slot state
+  // machine would fix it if seams show up in the recording.
+  async function rotateSession() {
+    setPhase("ROTATING");
+    log("rotation_start", {});
+    let statusNow;
+    try {
+      statusNow = await fetchJson("/status");
+    } catch (e) {
+      return log("rotation_status_failed", { message: String(e) });
+    }
+    const prompt = statusNow.now?.prompt;
+    if (!prompt) return log("rotation_no_prompt", {});
+    const blob = await grabCanvasBlob();
+    if (!blob) return log("rotation_no_frame", {});
+    let imageUrl;
+    try {
+      imageUrl = await state.director.fal.storage.upload(blob);
+    } catch (e) {
+      return log("rotation_upload_failed", { message: String(e) });
+    }
+    const oldSession = state.director.session;
+    const oldVideo = state.director.video;
+    await openDirectorSession(prompt, undefined, {
+      imageUrl,
+      onLive: () => {
+        try {
+          oldSession.send({ type: "stop" });
+          oldSession.close();
+        } catch {
+          // already gone
+        }
+        oldVideo?.remove();
+        log("rotation_done", {});
+      },
+    });
+  }
+
+  function maybeRotate() {
+    const d = state.director;
+    if (!d.session || !d.openedAt || !d.maxSessionSeconds || d.rotateTriggered) return;
+    const ageMs = Date.now() - d.openedAt;
+    const capMs = d.maxSessionSeconds * 1000;
+    if (capMs - ageMs <= 20_000) {
+      d.rotateTriggered = true;
+      rotateSession();
+    }
+  }
+
+  // ---- steering loop (director:off resolves for free) and idle/cost guard ----------------
+
+  function resolveIdentSteer(steer) {
+    state.ident.lastPrompt = steer.prompt;
+    reportSteerResult(steer.steerId, true);
+  }
+
+  async function pollNextSteerInner() {
+    if (!state.secret) return;
+    let res;
+    try {
+      res = await fetch(`/b/${state.secret}/next-steer`);
+    } catch (e) {
+      return log("next_steer_failed", { message: String(e) });
+    }
+    if (res.status === 204) return;
+    if (!res.ok) return log("next_steer_error", { status: res.status });
+    const steer = await res.json();
+    if (steer.steerId === state.lastSeenSteerId) return; // idempotent: already acted on it
+    state.lastSeenSteerId = steer.steerId;
+    state.steerSentAt.set(steer.steerId, Date.now());
+    state.idle.queueEmptySince = null;
+    playAnnouncer(steer.announcerUrl, steer.steerId); // fires whether Director is on or off
+    if (state.directorOff) return resolveIdentSteer(steer);
+    if (state.director.session) return sendSteer(steer.prompt, steer.steerId);
+    return openDirectorSession(steer.prompt, steer.steerId);
+  }
+
+  async function pollNextSteer() {
+    if (state.steerPollBusy) return;
+    state.steerPollBusy = true;
+    try {
+      await pollNextSteerInner();
+    } finally {
+      state.steerPollBusy = false;
+    }
+  }
+
+  async function pollStatusForIdleInner() {
+    let status;
+    try {
+      status = await fetchJson("/status");
+    } catch (e) {
+      return log("status_poll_failed", { message: String(e) });
+    }
+    const empty = status.queue.length === 0 && status.steering === null;
+    if (!empty) {
+      state.idle.queueEmptySince = null;
+      return;
+    }
+    state.idle.queueEmptySince ??= Date.now();
+    if (Date.now() - state.idle.queueEmptySince >= 120_000 && state.director.session) {
+      log("idle_stop", {});
+      stopDirectorDeliberately();
+    }
+  }
+
+  async function pollStatusForIdle() {
+    if (state.idlePollBusy) return;
+    state.idlePollBusy = true;
+    try {
+      await pollStatusForIdleInner();
+    } finally {
+      state.idlePollBusy = false;
+    }
+  }
+
+  function tickClock() {
+    updateOperatorUi();
+    maybeRotate();
+  }
+
+  // ---- boot ---------------------------------------------------------------------------------
+
+  async function startAll() {
+    if (state.started) return;
+    state.started = true;
+    els.startBtn.disabled = true;
+    setupAudioGraph();
+    startIdentLoop();
+    state.videoTrack = els.stage.captureStream(24).getVideoTracks()[0];
+    state.audioTrack = state.audio.destination.stream.getAudioTracks()[0];
+    connectVonage();
+    setInterval(pollNextSteer, 3000);
+    setInterval(pollStatusForIdle, 5000);
+    setInterval(tickClock, 1000);
+    pollNextSteer();
+    log("started", {});
+  }
+
+  function init() {
+    const hash = location.hash.slice(1);
+    if (!hash) return showFatalError("Missing secret in URL hash: broadcaster.html#<secret>");
+    state.secret = hash;
+    const params = new URLSearchParams(location.search);
+    state.directorOff = params.get("director") === "off";
+    els.startBtn.addEventListener("click", startAll);
+    els.stopBtn.addEventListener("click", stopDirectorDeliberately);
+    setPhase("IDENT");
+    log("init", { directorOff: state.directorOff });
+    if (params.get("autostart") === "1") startAll();
+  }
+
+  init();
+</script>
