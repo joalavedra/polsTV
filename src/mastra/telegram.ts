@@ -10,7 +10,7 @@ import type { ChannelConfig, ChannelContext } from "@mastra/core/channels";
 import { createTool } from "@mastra/core/tools";
 import { Memory } from "@mastra/memory";
 import { z } from "zod";
-import type { AddResult, Idea, Scene, Status } from "./channel";
+import type { AddResult, Idea, IdeaKind, Scene, Status } from "./channel";
 import { channel, STEER_GAP_MS } from "./channel";
 import type { ModerationOutcome } from "./showrunner";
 import { MAX_IDEA_CHARS, moderate } from "./showrunner";
@@ -66,7 +66,13 @@ const sceneHistory = new SceneHistory();
 
 export interface SubmitIdeaDeps {
   moderate: (text: string, name: string) => Promise<ModerationOutcome>;
-  addIdea: (input: { uid: string; name: string; text: string; source: "telegram" }) => AddResult;
+  addIdea: (input: {
+    uid: string;
+    name: string;
+    text: string;
+    source: "telegram";
+    kind: IdeaKind;
+  }) => AddResult;
   queuePosition: (uid: string) => number | undefined;
   /** Meters exactly like the web `/say` route — see spend.ts. `target` is the idea id once
    * queued, or "rejected" if it never got a queue slot. */
@@ -93,6 +99,7 @@ export async function submitIdeaLogic(
   uid: string,
   name: string,
   text: string,
+  kind: IdeaKind = "new",
 ): Promise<SubmitIdeaResult> {
   let outcome: ModerationOutcome;
   try {
@@ -106,7 +113,7 @@ export async function submitIdeaLogic(
     deps.recordModeration("rejected", name, text, usage);
     return { queued: false, reason: verdict.reason };
   }
-  const added = deps.addIdea({ uid, name, text, source: "telegram" });
+  const added = deps.addIdea({ uid, name, text, source: "telegram", kind });
   if (!added.ok) {
     deps.recordModeration("rejected", name, text, usage);
     return { queued: false, reason: added.reason };
@@ -119,16 +126,25 @@ export async function submitIdeaLogic(
 export const submitIdea = createTool({
   id: "submit-idea",
   description:
-    `Queue the caller's idea for the next scene on ${CHANNEL_NAME}, the shared live AI TV ` +
-    "channel. Moderates it first. Returns whether it was queued, its position in line and the " +
-    "rough wait in seconds, or the reason it was turned down.",
+    `Queue the caller's idea for ${CHANNEL_NAME}, the shared live AI TV channel. Moderates it ` +
+    "first. Returns whether it was queued, its position in line and the rough wait in seconds, " +
+    "or the reason it was turned down.",
   inputSchema: z.object({
     text: z
       .string()
       .trim()
       .min(1)
       .max(MAX_IDEA_CHARS)
-      .describe("The scene idea, in the viewer's own words."),
+      .describe("The scene idea, or the one thing to change, in the viewer's own words."),
+    amend: z
+      .boolean()
+      .optional()
+      .describe(
+        "True to change ONE thing about the scene already on screen instead of queuing a new " +
+          `one - use this when the caller says things like "now make it...", "add a...", "same ` +
+          `but...", "change the...", "turn it into...". False or omitted for a fresh, unrelated ` +
+          "scene idea.",
+      ),
   }),
   outputSchema: z.object({
     queued: z.boolean(),
@@ -136,7 +152,7 @@ export const submitIdea = createTool({
     position: z.number().int().optional(),
     waitSeconds: z.number().int().optional(),
   }),
-  execute: async ({ text }, context) => {
+  execute: async ({ text, amend }, context) => {
     const uid = requireTelegramUid(context.agent?.resourceId);
     const name = displayName(context.requestContext.get("channel"));
     return submitIdeaLogic(
@@ -149,6 +165,7 @@ export const submitIdea = createTool({
       uid,
       name,
       text,
+      amend ? "amend" : "new",
     );
   },
 });
@@ -252,7 +269,9 @@ watching sends you scene ideas, and the best one airs next. Likes on a scene bec
 whoever prompted it.
 
 When someone sends you an idea for the channel, call submit_idea and tell them plainly whether it's
-queued (with their position and rough wait) or why it was turned down.
+queued (with their position and rough wait) or why it was turned down. A fresh, unrelated idea
+replaces the scene on air; set amend:true instead when they want to change one thing about the
+scene that's already on screen right now, like adding a hat or making it snow, without a cut.
 When someone asks what's on, what's airing, or what's happening on ${CHANNEL_NAME}, call whats_on.
 When someone asks about their karma, their queued idea, or how their scene did, call my_stats.
 
@@ -336,6 +355,9 @@ async function sendTelegramDM(uid: string, text: string): Promise<void> {
 export interface SceneChange {
   onAir: Scene | undefined;
   ended: Scene | undefined;
+  /** True when `onAir` is the scene continuing after an applied amend, not a new one taking over —
+   * suppresses the "you're on air" DM, which the original prompter already got once for this scene. */
+  amended: boolean;
 }
 
 export interface DMJob {
@@ -344,9 +366,9 @@ export interface DMJob {
 }
 
 /** Pure: what to DM given a resolved steer. No network, no Mastra — easy to unit test. */
-export function sceneChangeMessages({ onAir, ended }: SceneChange, link: string): DMJob[] {
+export function sceneChangeMessages({ onAir, ended, amended }: SceneChange, link: string): DMJob[] {
   const jobs: DMJob[] = [];
-  if (onAir) {
+  if (onAir && !amended) {
     jobs.push({ uid: onAir.uid, text: `You're on air now! Watch ${CHANNEL_NAME}: ${link}` });
   }
   if (ended && ended.likes > 0) {
