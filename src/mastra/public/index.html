@@ -50,7 +50,9 @@
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   #video-wrap { position: fixed; inset: 0; background: #000; }
-  #subscriber-container { width: 100%; height: 100%; overflow: hidden; }
+  #subscriber-container { position: relative; width: 100%; height: 100%; overflow: hidden; }
+  /* Streams are appended and briefly overlap during a broadcaster restart: stack, don't flow. */
+  #subscriber-container > * { position: absolute !important; inset: 0; }
   #subscriber-container video, #subscriber-container object {
     width: 100% !important;
     height: 100% !important;
@@ -706,8 +708,7 @@
     // ---------- mute toggle ----------
     let wantMuted = false;
     function applyMute() {
-      const video = subscriberContainer.querySelector("video");
-      if (video) video.muted = wantMuted;
+      for (const video of subscriberContainer.querySelectorAll("video")) video.muted = wantMuted;
     }
     muteBtn.addEventListener("click", () => {
       wantMuted = !wantMuted;
@@ -1032,23 +1033,39 @@
       setTimeout(connectViewer, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
     }
+    // Two publishers overlap whenever the broadcaster restarts. Subscribe to the newest stream, drop
+    // the previous one only once the new one is up, and ignore the end of a stream we already left:
+    // otherwise the old stream's goodbye blanked the screen while the new one was playing.
+    let currentStream;
     function onStreamCreated(session, event) {
-      session.subscribe(
+      const previous = currentStream;
+      const subscriber = session.subscribe(
         event.stream,
         "subscriber-container",
         {
-          insertMode: "replace",
+          insertMode: "append",
           width: "100%",
           height: "100%",
           fitMode: "cover",
           subscribeToAudio: true,
           style: { audioBlockedDisplayMode: "off", buttonDisplayMode: "off", nameDisplayMode: "off" },
         },
-        (err) => { if (err) console.error("subscribe failed:", err); },
+        (err) => {
+          if (err) return console.error("subscribe failed:", err);
+          if (previous) session.unsubscribe(previous.subscriber);
+          applyMute();
+        },
       );
+      currentStream = { streamId: event.stream.streamId, subscriber };
       hasStream = true;
       updateVideoVisibility();
       applyMute();
+    }
+    function onStreamDestroyed(event) {
+      if (currentStream?.streamId !== event.stream.streamId) return;
+      currentStream = undefined;
+      hasStream = false;
+      updateVideoVisibility();
     }
     async function connectViewer() {
       let creds;
@@ -1062,10 +1079,7 @@
       }
       const session = OT.initSession(creds.applicationId, creds.sessionId);
       session.on("streamCreated", (event) => onStreamCreated(session, event));
-      session.on("streamDestroyed", () => {
-        hasStream = false;
-        updateVideoVisibility();
-      });
+      session.on("streamDestroyed", onStreamDestroyed);
       session.on("sessionDisconnected", scheduleReconnect);
       session.connect(creds.token, (err) => {
         if (err) scheduleReconnect();
