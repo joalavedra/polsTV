@@ -305,8 +305,11 @@
       const source = state.audio.ctx.createBufferSource();
       source.buffer = buffer;
       source.connect(state.audio.destination);
+      // A suspended AudioContext (no user gesture yet) never fires onended, which would wedge the
+      // queue for the rest of the broadcast. Give up a couple of seconds past the clip's length.
       const ended = new Promise((resolve) => {
         source.onended = resolve;
+        setTimeout(resolve, buffer.duration * 1000 + 2000);
       });
       duckDirectorGain(0.3);
       log("clip_playing", { key: item.key, seconds: Math.round(buffer.duration * 10) / 10 });
