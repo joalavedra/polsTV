@@ -77,8 +77,9 @@ export interface SteerOutcome {
   amended: boolean;
 }
 
-/** Measured steer-to-screen latency is 17-20 s; steering faster than this just stacks prompts. */
-export const STEER_GAP_MS = 25_000;
+/** Each scene holds the screen for 10 s before the next steer can land. Raise this if scenes feel
+ * rushed in live testing. */
+export const STEER_GAP_MS = 10_000;
 /** More than this and the scene stops resembling what the original prompter asked for. */
 export const MAX_AMENDS_PER_SCENE = 3;
 const VIEWER_TTL_MS = 10_000;
