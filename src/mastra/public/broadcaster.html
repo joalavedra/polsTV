@@ -125,7 +125,14 @@
     audio: { ctx: undefined, destination: undefined, directorGain: undefined },
     videoTrack: undefined,
     audioTrack: undefined,
-    vonage: { session: undefined, publisher: undefined, publishing: false, reconnectAttempts: 0 },
+    serverSeenAt: 0, // last next-steer poll that got an answer, so a reload cannot land on a dead server
+    vonage: {
+      session: undefined,
+      publisher: undefined,
+      publishing: false,
+      reconnectAttempts: 0,
+      downSince: undefined, // when the picture stopped reaching Vonage, for watchPublish
+    },
     director: {
       session: undefined,
       fal: undefined,
@@ -146,6 +153,10 @@
   function log(type, data) {
     const time = new Date().toISOString().slice(11, 19);
     const line = `${time} ${type} ${JSON.stringify(data ?? {})}`;
+    // In production this page is a headless tab nobody can open. The console is the only way its
+    // log reaches the operator; scripts/start.sh runs Chrome with --enable-logging=stderr so it
+    // lands in the same stream as the server's own output.
+    console.log(`broadcaster ${line}`);
     const row = document.createElement("div");
     row.textContent = line;
     els.log.appendChild(row);
@@ -248,8 +259,11 @@
     const draw = () => {
       if (state.director.activeVideo !== video) return; // superseded (rotation/teardown), stop
       drawDirectorFrame(video);
+      // Never requestAnimationFrame: a headless tab has no display link (the production log's
+      // CVDisplayLinkCreateWithCGDisplay failures) and rAF stops dead without one, which would
+      // freeze the published picture on its last frame. rVFC and timers both keep firing.
       if ("requestVideoFrameCallback" in video) video.requestVideoFrameCallback(draw);
-      else requestAnimationFrame(draw);
+      else setTimeout(draw, 1000 / 24);
     };
     draw();
   }
@@ -400,6 +414,14 @@
       },
     );
     state.vonage.publisher = publisher;
+    // Vonage can kill just our stream — a network change, an ICE restart that never lands — and
+    // leave the session connected. Nothing else notices, so the picture stops while the page
+    // still reads as healthy and keeps heartbeating. watchPublish picks it up from here.
+    publisher.on("streamDestroyed", (event) => {
+      if (state.vonage.publisher !== publisher) return; // a superseded publisher's goodbye
+      state.vonage.publishing = false;
+      log("vonage_stream_destroyed", { reason: event.reason });
+    });
     session.publish(publisher, (error) => {
       if (error) {
         state.vonage.publishing = false;
@@ -409,6 +431,29 @@
         log("vonage_publishing", {});
       }
     });
+  }
+
+  // Everything above reports its own failure and stops: a publish that failed is never retried,
+  // and a stream the network kills under a still-connected session is not noticed at all —
+  // measured, the page kept polling, the server kept saying live, and every viewer waited on a
+  // picture that was never coming. Recovering in place means rebuilding the canvas capture, the
+  // audio graph and the session (OT's destroy stops the tracks all three share, so a republish
+  // on the old ones fails "unable to get access to your microphone"). A reload does all of it
+  // and cannot leave half-dead media behind, and ?autostart=1 brings the page straight back.
+  const RELOAD_AFTER_MS = 60_000;
+
+  function watchPublish() {
+    if (state.vonage.publishing) {
+      state.vonage.downSince = undefined;
+      return;
+    }
+    state.vonage.downSince ??= Date.now();
+    const downMs = Date.now() - state.vonage.downSince;
+    // Only while the server is answering: a reload during its restart would land on a refused
+    // connection and leave a dead page no supervisor can tell apart from a working one.
+    if (downMs < RELOAD_AFTER_MS || Date.now() - state.serverSeenAt > 15_000) return;
+    log("vonage_down_reloading", { downMs });
+    location.reload();
   }
 
   function scheduleVonageReconnect() {
@@ -429,6 +474,7 @@
     const session = OT.initSession(token.applicationId, token.sessionId);
     state.vonage.session = session;
     session.on("sessionDisconnected", () => {
+      if (state.vonage.session !== session) return; // a superseded session's goodbye
       log("vonage_disconnected", {});
       state.vonage.publisher = undefined;
       state.vonage.publishing = false;
@@ -720,6 +766,7 @@
     } catch (e) {
       return log("next_steer_failed", { message: String(e) });
     }
+    state.serverSeenAt = Date.now();
     if (res.status === 204) return;
     if (!res.ok) return log("next_steer_error", { status: res.status });
     const steer = await res.json();
@@ -779,6 +826,7 @@
   function tickClock() {
     updateOperatorUi();
     maybeRotate();
+    watchPublish();
   }
 
   // ---- boot ---------------------------------------------------------------------------------
