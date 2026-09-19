@@ -238,6 +238,9 @@
   /* #splash/#name-modal set their own `display: flex`, which as an ID selector
      outranks the UA `[hidden] { display: none }` rule. Restate it explicitly. */
   #splash[hidden], #name-modal[hidden] { display: none; }
+  /* Third time an id rule's own `display` beat [hidden] (the OFF AIR card sat over live video).
+     One rule for the whole page ends that class of bug. */
+  [hidden] { display: none !important; }
   .modal {
     background: #111;
     border: 1px solid var(--panel-border);
