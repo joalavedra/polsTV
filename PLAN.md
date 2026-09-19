@@ -12,8 +12,9 @@ Research: `hackathon-report.md` and `slop-report.md` (copied next to this file).
 - "Existing ideas are fine, existing code is not" (Mastra rule; organizers may ask for GitHub access).
   The saved `slop/index.html` is a behaviour reference. Do not copy code from it.
 - Mastra's remote judge texts the bot Sunday afternoon; bot + stream must be up until **17:30 Sun**.
-- Director promo ended 14 Sep: list price is $0.08/s = **$288/hour of stream, $4.80 minimum per
-  session opened** (1080p is 2×; use 768p or 480p). Max session is 2 min or 15 min depending on which
+- Director is billed to our key at the promo rate, **$0.02/s = $72/hour, $1.20 minimum per session**
+  (fal dashboard showed $7.56 after ~380 s across three sessions on 19 Sep; the public list price is
+  $0.08/s and the page says the promo ended 14 Sep, so re-check the dashboard before long runs) (1080p is 2×; use 768p or 480p). Max session is 2 min or 15 min depending on which
   fal page you read. Ask fal mentors (Umut Günbak, Alper Bahçekapılı) for: credits with a number
   attached (≥ $500), the real session cap on our key and a raise, and whether a continuation handle
   exists. See `docs/cards/director.md`.
