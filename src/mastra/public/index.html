@@ -2550,12 +2550,17 @@
         "You can still chat, send ideas and like. To watch here: open this page in Safari, tap the " +
         "page menu next to the address, and turn Lockdown Mode off for this website.",
     };
+    const SERVERDOWN_TEXT = "Can't reach the channel — reconnecting…";
+    // A failed poll leaves the last status in place, so a page open across a server restart went
+    // on claiming "On air — waiting for the picture…" while nothing was answering at all.
+    let failedPolls = 0;
     function updateVideoVisibility() {
       offairCard.hidden = hasStream && statusLive;
       // Off air is off air whatever the video layer is doing; the rest only matters while live.
       if (offairCard.hidden) return;
       // A browser without WebRTC will never show the picture, on air or not, so say that first.
       if (videoState === "nowebrtc") offairText.textContent = VIDEO_TEXT.nowebrtc;
+      else if (failedPolls >= 3) offairText.textContent = SERVERDOWN_TEXT;
       else offairText.textContent = statusLive ? VIDEO_TEXT[videoState] : OFFAIR_TEXT;
     }
     function renderLivePill(live, viewers) {
@@ -2657,8 +2662,14 @@
       try {
         const res = await fetch(`status?uid=${encodeURIComponent(uid)}`);
         if (!res.ok) return;
-        renderStatus(await res.json());
-      } catch { /* transient network hiccup, next tick retries */ }
+        const status = await res.json();
+        failedPolls = 0;
+        renderStatus(status);
+      } catch {
+        // Transient hiccup, next tick retries — but say so once it stops looking transient.
+        failedPolls += 1;
+        if (failedPolls === 3) updateVideoVisibility();
+      }
     }
     function startPolling() {
       if (statusTimer) return;
