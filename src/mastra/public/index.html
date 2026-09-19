@@ -1846,8 +1846,8 @@
       likeHeart.hidden = isOwn;
       likeCount.hidden = isOwn;
       likeOwnLabel.hidden = !isOwn;
-      likeHeart.textContent = isLiked ? "♥" : "♡";
-      likeCount.textContent = String(now.likes);
+      setText(likeHeart, isLiked ? "♥" : "♡");
+      setText(likeCount, String(now.likes));
       likeBtn.setAttribute(
         "aria-label",
         isOwn
@@ -2277,18 +2277,37 @@
     // voice:end
 
     // ---------- diff-render helpers ----------
+    // Assigning the same string still queues a mutation record and a style/layout invalidation.
+    // Measured at 390x844 with nothing on the channel changing: 769 DOM mutations a second.
+    function setText(el, text) {
+      if (el.textContent !== text) el.textContent = text;
+    }
+    function setStyle(el, prop, value) {
+      if (el.style.getPropertyValue(prop) !== value) el.style.setProperty(prop, value);
+    }
+    // Last-rendered payload per list, so an unchanged queue/chat/rank touches no DOM at all.
+    const listSignatures = new Map();
     function syncList(container, items, keyFn, renderFn) {
+      const signature = JSON.stringify(items);
+      if (listSignatures.get(container) === signature) return;
+      listSignatures.set(container, signature);
       const existing = new Map();
       for (const child of container.children) {
         if (child.dataset.key !== undefined) existing.set(child.dataset.key, child);
       }
       const seen = new Set();
+      let index = 0;
       for (const item of items) {
         const key = String(keyFn(item));
         seen.add(key);
         const el = renderFn(item, existing.get(key));
         el.dataset.key = key;
-        container.appendChild(el);
+        // appendChild moves a node even when it is already in the right place. Only reposition
+        // the rows that actually moved.
+        if (container.children[index] !== el) {
+          container.insertBefore(el, container.children[index] ?? null);
+        }
+        index++;
       }
       for (const [key, el] of existing) if (!seen.has(key)) el.remove();
     }
@@ -2303,14 +2322,14 @@
         el.append(h("span", "q-avatar"), body);
       }
       const avatar = el.querySelector(".q-avatar");
-      avatar.textContent = (item.name || "?").charAt(0).toUpperCase();
-      avatar.style.background = `hsl(${hashHue(item.name)}, 85%, 85%)`;
+      setText(avatar, (item.name || "?").charAt(0).toUpperCase());
+      setStyle(avatar, "background", `hsl(${hashHue(item.name)}, 85%, 85%)`);
       const tag = el.querySelector(".kind-tag");
-      tag.textContent = "change";
+      setText(tag, "change");
       tag.hidden = item.kind !== "amend";
-      el.querySelector(".q-name").textContent = item.name;
-      el.querySelector(".q-karma").textContent = `★ ${item.karma}`;
-      el.querySelector(".q-text").textContent = item.text;
+      setText(el.querySelector(".q-name"), item.name);
+      setText(el.querySelector(".q-karma"), `★ ${item.karma}`);
+      setText(el.querySelector(".q-text"), item.text);
       return el;
     }
     function renderChatItem(item, el) {
@@ -2321,13 +2340,14 @@
         el.append(meta, h("p", "chat-text"));
       }
       const tint = `hsl(${hashHue(item.name)}, 85%, 85%)`;
-      el.style.background = tint; // mobile bubble; desktop instead tints ::before (--chat-avatar-bg)
-      el.style.setProperty("--chat-avatar-bg", tint);
-      el.dataset.initial = (item.name || "?").charAt(0).toUpperCase(); // desktop avatar ::before
-      el.querySelector(".chat-name").textContent = item.name;
-      el.querySelector(".chat-karma").textContent = `★${item.karma}`;
-      el.querySelector(".chat-time").textContent = formatTime(item.at);
-      el.querySelector(".chat-text").textContent = item.text;
+      setStyle(el, "background", tint); // mobile bubble; desktop tints ::before instead
+      setStyle(el, "--chat-avatar-bg", tint);
+      const initial = (item.name || "?").charAt(0).toUpperCase(); // desktop avatar ::before
+      if (el.dataset.initial !== initial) el.dataset.initial = initial;
+      setText(el.querySelector(".chat-name"), item.name);
+      setText(el.querySelector(".chat-karma"), `★${item.karma}`);
+      setText(el.querySelector(".chat-time"), formatTime(item.at));
+      setText(el.querySelector(".chat-text"), item.text);
       return el;
     }
     function renderRankItem(item, el) {
@@ -2337,8 +2357,8 @@
       }
       const prevKarma = el.dataset.karma;
       el.dataset.karma = String(item.karma);
-      el.querySelector(".rank-name").textContent = item.name;
-      el.querySelector(".rank-karma").textContent = String(item.karma);
+      setText(el.querySelector(".rank-name"), item.name);
+      setText(el.querySelector(".rank-karma"), String(item.karma));
       if (prevKarma !== undefined && prevKarma !== el.dataset.karma) {
         el.classList.remove("flash");
         void el.offsetWidth; // restart the animation if it's already flashing
@@ -2352,7 +2372,7 @@
     function renderYouChip() {
       const name = getName();
       youChip.hidden = !name;
-      if (name) youKarma.textContent = String(myKarma);
+      if (name) setText(youKarma, String(myKarma));
     }
 
     // ---------- chat scroll pinning ----------
@@ -2393,21 +2413,21 @@
     }
     function renderLivePill(live, viewers) {
       livePill.classList.toggle("is-live", live);
-      liveLabel.textContent = live ? "LIVE" : "OFF AIR";
-      liveViewerCount.textContent = `${viewers} watching`;
+      setText(liveLabel, live ? "LIVE" : "OFF AIR");
+      setText(liveViewerCount, `${viewers} watching`);
     }
     function renderCaption(now) {
       stageCaption.hidden = !now;
       if (!now) return;
-      stageCaptionName.textContent = now.name;
-      stageCaptionKarmaN.textContent = String(now.karma);
-      stageCaptionText.textContent = now.text;
-      stageCaptionText.title = now.text;
+      setText(stageCaptionName, now.name);
+      setText(stageCaptionKarmaN, String(now.karma));
+      setText(stageCaptionText, now.text);
+      if (stageCaptionText.title !== now.text) stageCaptionText.title = now.text;
       // amend:start
       const amendCount = now.amends ? now.amends.length : 0;
       captionAmendsChip.hidden = amendCount === 0;
       if (amendCount > 0) {
-        captionAmendsChip.textContent = `+${amendCount} ${amendCount === 1 ? "change" : "changes"}`;
+        setText(captionAmendsChip, `+${amendCount} ${amendCount === 1 ? "change" : "changes"}`);
       }
       // amend:end
     }
@@ -2430,7 +2450,12 @@
       if (now.likes > previous.likes) spawnLikeHearts(Math.min(now.likes - previous.likes, 8));
       if (now.karma > previous.karma) popCaptionKarma();
     }
+    let steeringSignature;
     function renderSteering(steering) {
+      // Rebuilt four elements every second even when the same idea was still steering.
+      const signature = JSON.stringify(steering ?? null);
+      if (steeringSignature === signature) return;
+      steeringSignature = signature;
       steeringBody.textContent = "";
       if (!steering) {
         steeringBody.appendChild(h("p", "steer-hint", "Nothing steering yet."));
@@ -2454,12 +2479,12 @@
     function renderRailAvatar(now) {
       railAvatarItem.hidden = !now;
       if (!now) return;
-      railAvatar.textContent = (now.name || "?").charAt(0).toUpperCase();
-      railAvatar.style.background = `hsl(${hashHue(now.name)}, 85%, 85%)`;
-      railAvatarKarma.textContent = `★ ${now.karma}`;
+      setText(railAvatar, (now.name || "?").charAt(0).toUpperCase());
+      setStyle(railAvatar, "background", `hsl(${hashHue(now.name)}, 85%, 85%)`);
+      setText(railAvatarKarma, `★ ${now.karma}`);
     }
     function renderChatCount(chat) {
-      chatCountLabel.textContent = String(chat.length);
+      setText(chatCountLabel, String(chat.length));
     }
     function renderStatus(status) {
       const previousNow = lastNow;
@@ -2473,7 +2498,7 @@
       renderAmendToggle(status.now); // amend
       renderLikeButton();
       renderPitchBadge(status.pitch); // pitch
-      viewerCount.textContent = `${status.viewers} watching`;
+      setText(viewerCount, `${status.viewers} watching`);
       renderSteering(status.steering);
       syncList(railQueue, status.queue, (q) => q.id, renderQueueItem);
       syncList(paneQueue, status.queue, (q) => q.id, renderQueueItem);
