@@ -7,21 +7,28 @@ import { LibSQLStore } from "@mastra/libsql";
 import { Mastra } from "@mastra/core/mastra";
 import { registerApiRoute } from "@mastra/core/server";
 import { z } from "zod";
-import { announcerLine, clip, synthesise } from "./announcer";
+import { clip, synthesise } from "./announcer";
 import type { Idea } from "./channel";
 import { channel } from "./channel";
+import { livePitchDeps, PITCH_MIN_KARMA, pitchSlot, submitPitch } from "./pitch";
 import type { SteerWriteOutcome } from "./showrunner";
 import {
   amendWriter,
   MAX_IDEA_CHARS,
+  MAX_PITCH_BRIEF_CHARS,
   moderate,
   moderator,
+  narrator,
+  pitchModerator,
+  pitchWriter,
   sceneWriter,
   writeAmend,
   writeSteer,
+  writeVoiceOver,
 } from "./showrunner";
+import type { TokenUsage } from "./spend";
 import { spend } from "./spend";
-import { notifySceneChange, showrunner } from "./telegram";
+import { notifyPitchDropped, notifySceneChange, showrunner } from "./telegram";
 import { videoAccess } from "./vonage";
 
 const broadcasterSecret = process.env["BROADCASTER_SECRET"];
@@ -50,6 +57,31 @@ function accrueHeartbeat(directorOpen: boolean): void {
   });
 }
 
+interface SteerVoice {
+  usage: TokenUsage;
+  clipId: string | undefined;
+  url: string | undefined;
+}
+
+const ZERO_USAGE: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+
+/**
+ * The line the channel's voice reads over the scene a steer is about to bring up: written by the
+ * narrator, then synthesised by SLNG. The clip is garnish — a TTS failure is logged and the steer
+ * goes out silent rather than late.
+ */
+async function narrateSteer(idea: Idea): Promise<SteerVoice> {
+  const voiceOver = await writeVoiceOver(idea.name, idea.text);
+  try {
+    const clipId = await synthesise(`steer-${idea.id}`, voiceOver.line);
+    // Page-relative, so it still resolves when the app is served under a path prefix.
+    return { usage: voiceOver.usage, clipId, url: `announcer/${clipId}` };
+  } catch (error) {
+    console.error(`announcer failed for idea ${idea.id}, steering without it:`, error);
+    return { usage: voiceOver.usage, clipId: undefined, url: undefined };
+  }
+}
+
 // Web callers may not claim a "telegram:" uid; those only come from the Telegram channel.
 const uid = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);
 const sayBody = z.object({
@@ -60,11 +92,48 @@ const sayBody = z.object({
   kind: z.enum(["new", "amend"]).default("new"),
 });
 const likeBody = z.object({ uid });
+const pitchBody = z.object({
+  uid,
+  name: z.string().trim().min(1).max(24),
+  brief: z.string().trim().min(1).max(MAX_PITCH_BRIEF_CHARS),
+});
 const steerResultBody = z.object({
   steerId: z.number().int(),
   applied: z.boolean(),
   reason: z.string().max(200).optional(),
 });
+const pitchResultBody = z.object({
+  pitchId: z.number().int(),
+  played: z.boolean(),
+  reason: z.string().max(200).optional(),
+});
+
+// Which HTTP status each refusal from pitch.ts is worth. Everything else is a 200.
+const pitchStatus = {
+  karma: 403,
+  cooldown: 429,
+  busy: 409,
+  rejected: 422,
+  unavailable: 503,
+} as const;
+
+/** Drop pitches the broadcaster never collected and tell whoever submitted them. */
+function sweepPitches(): void {
+  pitchSlot.sweep();
+  for (let dropped = pitchSlot.takeDropped(); dropped; dropped = pitchSlot.takeDropped()) {
+    console.warn(`pitch ${dropped.id} from ${dropped.uid} was never played, dropped`);
+    void notifyPitchDropped(dropped.uid);
+  }
+}
+
+type BroadcasterPitch = { pitch: { pitchId: number; name: string; url: string } };
+
+/** The pitch waiting for the air, handed to the broadcaster exactly once. */
+function pitchForBroadcaster(): BroadcasterPitch | undefined {
+  const pitch = pitchSlot.take();
+  if (!pitch?.url) return undefined;
+  return { pitch: { pitchId: pitch.id, name: pitch.name, url: pitch.url } };
+}
 
 function isBroadcaster(secret: string): boolean {
   const given = Buffer.from(secret);
@@ -112,15 +181,15 @@ async function asset(file: string): Promise<Buffer | undefined> {
   return undefined;
 }
 
-// Moderation is a paid LLM call, so one idea per client every few seconds is plenty.
-const SAY_MIN_GAP_MS = 3_000;
-const lastSayAt = new Map<string, number>();
+// Moderation is a paid LLM call, so one idea or pitch per client every few seconds is plenty.
+const POST_MIN_GAP_MS = 3_000;
+const lastPostAt = new Map<string, number>();
 
-function sayTooSoon(client: string): boolean {
+function postTooSoon(client: string): boolean {
   const now = Date.now();
-  if (now - (lastSayAt.get(client) ?? 0) < SAY_MIN_GAP_MS) return true;
-  lastSayAt.set(client, now);
-  if (lastSayAt.size > 5_000) lastSayAt.clear();
+  if (now - (lastPostAt.get(client) ?? 0) < POST_MIN_GAP_MS) return true;
+  lastPostAt.set(client, now);
+  if (lastPostAt.size > 5_000) lastPostAt.clear();
   return false;
 }
 
@@ -146,7 +215,7 @@ async function writeForIdea(idea: Idea, currentPrompt: string | undefined): Prom
 }
 
 export const mastra = new Mastra({
-  agents: { moderator, sceneWriter, amendWriter, showrunner },
+  agents: { moderator, sceneWriter, amendWriter, narrator, pitchModerator, pitchWriter, showrunner },
   // Channels (Telegram) need storage on the Mastra instance or subscriptions, dedup and approvals
   // reset on every restart. Also backs the showrunner's per-user memory (docs/cards/mastra-nebius).
   storage: new LibSQLStore({ id: "mastra-storage", url: "file:./mastra.db" }),
@@ -200,7 +269,25 @@ export const mastra = new Mastra({
         handler: async (c) => {
           const viewer = uid.safeParse(c.req.query("uid"));
           if (viewer.success) channel.sawViewer(viewer.data);
-          return c.json(channel.status());
+          sweepPitches();
+          return c.json({ ...channel.status(), pitch: pitchSlot.status() ?? null });
+        },
+      }),
+
+      // Per-viewer state the whole channel does not need: /status is polled every second by
+      // everyone watching, this only when the pitch button needs to know where a viewer stands.
+      registerApiRoute("/me", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => {
+          const viewer = uid.safeParse(c.req.query("uid"));
+          if (!viewer.success) return c.json({ ok: false, reason: "Invalid uid." }, 400);
+          const karma = channel.karmaOf(viewer.data);
+          return c.json({
+            karma,
+            pitchUnlocked: karma >= PITCH_MIN_KARMA,
+            pitchCooldownSeconds: pitchSlot.cooldownSeconds(viewer.data),
+          });
         },
       }),
 
@@ -220,7 +307,7 @@ export const mastra = new Mastra({
           if (!body.success) return c.json({ ok: false, reason: "Invalid message." }, 400);
           // Only proxied (public) traffic is limited; localhost has no forwarding header.
           const client = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for");
-          if (client && sayTooSoon(client)) {
+          if (client && postTooSoon(client)) {
             return c.json({ ok: false, reason: "Slow down a little." }, 429);
           }
           let verdict, usage;
@@ -241,6 +328,23 @@ export const mastra = new Mastra({
           }
           spend.recordModeration(added.idea.id, added.idea.name, added.idea.text, usage);
           return c.json({ ok: true, id: added.idea.id });
+        },
+      }),
+
+      registerApiRoute("/pitch", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          const body = pitchBody.safeParse(await c.req.json().catch(() => null));
+          if (!body.success) return c.json({ ok: false, reason: "Invalid pitch." }, 400);
+          // Only proxied (public) traffic is limited; localhost has no forwarding header.
+          const client = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for");
+          if (client && postTooSoon(client)) {
+            return c.json({ ok: false, reason: "Slow down a little." }, 429);
+          }
+          const result = await submitPitch(pitchSlot, livePitchDeps, body.data);
+          if (!result.ok) return c.json(result, pitchStatus[result.code]);
+          return c.json(result);
         },
       }),
 
@@ -278,31 +382,35 @@ export const mastra = new Mastra({
           // ?director=1 while a Director session is open (broadcaster.html); this poll is also the
           // broadcaster's heartbeat, so bill it every time regardless of what it returns below.
           accrueHeartbeat(c.req.query("director") === "1");
+          sweepPitches();
+          // Rides along with whatever this poll was going to answer, including a 204 with nothing
+          // else in it. The broadcaster queues it behind any clip already playing.
+          const pitch = pitchForBroadcaster();
           const pending = channel.pendingSteer();
-          if (pending) return c.json(pending);
+          if (pending) return c.json({ ...pending, ...pitch });
           const idea = nextSteerableIdea();
-          if (!idea || !channel.canSteer() || writingSteer) return c.body(null, 204);
+          if (!idea || !channel.canSteer() || writingSteer) {
+            return pitch ? c.json(pitch) : c.body(null, 204);
+          }
           writingSteer = true;
           try {
-            // An amend is a small on-screen tweak: no spoken "up next" clip for it, and the
-            // announcer is garnish anyway — a TTS failure is logged and the steer goes out without it.
-            const [steerWrite, announcer] = await Promise.all([
+            // An amend is a small on-screen tweak: no narrated "up next" clip for it (that voice
+            // call itself costs Nebius tokens, not just the TTS) — a voice line for every small
+            // tweak would talk over the show.
+            const noVoice: SteerVoice = { usage: ZERO_USAGE, clipId: undefined, url: undefined };
+            const [steerWrite, voice] = await Promise.all([
               writeForIdea(idea, channel.status().now?.prompt),
-              idea.kind === "amend"
-                ? Promise.resolve(undefined)
-                : synthesise(`steer-${idea.id}`, announcerLine(idea.name, idea.text))
-                    // Page-relative, so it still resolves when the app is served under a path prefix.
-                    .then((clipId) => ({ clipId, url: `announcer/${clipId}` }))
-                    .catch((error: unknown) => {
-                      console.error(`announcer failed for idea ${idea.id}, steering without it:`, error);
-                      return undefined;
-                    }),
+              idea.kind === "amend" ? noVoice : narrateSteer(idea),
             ]);
             spend.recordSteerWrite(idea.id, idea.name, idea.text, steerWrite.usage);
-            if (announcer) {
-              spend.recordTts(idea.id, idea.name, idea.text, clip(announcer.clipId)?.length ?? 0);
+            if (idea.kind !== "amend") {
+              spend.recordSteerWrite(idea.id, idea.name, idea.text, voice.usage);
             }
-            return c.json(channel.beginSteer(idea.id, steerWrite.prompt, announcer?.url));
+            if (voice.clipId) {
+              spend.recordTts(idea.id, idea.name, idea.text, clip(voice.clipId)?.length ?? 0);
+            }
+            const steer = channel.beginSteer(idea.id, steerWrite.prompt, voice.url);
+            return c.json({ ...steer, ...pitch });
           } finally {
             writingSteer = false;
           }
@@ -339,6 +447,19 @@ export const mastra = new Mastra({
           }
           void notifySceneChange({ onAir, ended, amended });
           return c.json({ ok: true, onAir: onAir?.ideaId ?? null });
+        },
+      }),
+
+      registerApiRoute("/b/:secret/pitch-result", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          if (!isBroadcaster(c.req.param("secret"))) return c.notFound();
+          const body = pitchResultBody.safeParse(await c.req.json().catch(() => null));
+          if (!body.success) return c.json({ ok: false }, 400);
+          if (!body.data.played) console.warn("pitch clip did not play:", body.data.reason);
+          pitchSlot.release(body.data.pitchId);
+          return c.json({ ok: true });
         },
       }),
 
