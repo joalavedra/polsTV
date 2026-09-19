@@ -321,6 +321,7 @@ export const myStats = createTool({
 // --- ticker photo intake ---------------------------------------------------------------------
 
 const tickerIntakeDeps: PhotoIntakeDeps = {
+  cooldownSeconds: (uid) => ticker.cooldownSeconds(uid),
   downloadPhoto: downloadTelegramFile,
   moderateImage: moderateTickerImage,
   moderateText: moderate,

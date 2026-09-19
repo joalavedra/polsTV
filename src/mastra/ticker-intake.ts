@@ -1,7 +1,9 @@
 /**
  * Telegram photo intake for the ticker: a viewer sends the bot a photo (optionally with a
- * caption) and, once it clears moderation, it goes on the ticker for 30 minutes. Text messages
- * are untouched — telegram.ts still routes those to the showrunner agent as today.
+ * caption) and, once it clears moderation, it goes on the ticker for 1 minute. A viewer may add
+ * at most one photo per minute (ticker.ts's TICKER_COOLDOWN_MS), checked before any download or
+ * moderation call runs. Text messages are untouched — telegram.ts still routes those to the
+ * showrunner agent as today.
  *
  * `handlePhotoSubmission` is pure aside from its injected deps, so it is unit-tested with fakes
  * (see ticker-intake.test.ts). `downloadTelegramFile` and `moderateTickerImage` are the real
@@ -17,7 +19,7 @@ import type { AddTickerItemInput, TickerItem, TickerMime } from "./ticker";
 export const TICKER_MIN_SHORT_SIDE_PX = 240;
 export const TICKER_MAX_DOWNLOAD_BYTES = 1_000_000;
 export const TICKER_MAX_CAPTION_CHARS = 60;
-export const TICKER_ACCEPTED_REPLY = "On the ticker now, for 30 minutes";
+export const TICKER_ACCEPTED_REPLY = "On the ticker now, for 1 minute";
 
 const NO_CAPTION_PLACEHOLDER = "a shared photo";
 const VISION_TIMEOUT_MS = 8_000;
@@ -130,6 +132,8 @@ export interface VisionOutcome {
 }
 
 export interface PhotoIntakeDeps {
+  /** Whole seconds until this uid may add another item; 0 when they may add now. */
+  cooldownSeconds: (uid: string) => number;
   downloadPhoto: (fileId: string) => Promise<Uint8Array>;
   moderateImage: (bytes: Uint8Array, mime: TickerMime) => Promise<VisionOutcome>;
   moderateText: (text: string, name: string) => Promise<ModerationOutcome>;
@@ -157,14 +161,21 @@ function clampCaption(caption: string | undefined): string | undefined {
 }
 
 /**
- * The full photo-to-ticker pipeline: pick a size, download it, check its size and magic bytes,
- * moderate the image, moderate the caption/name, then store it. Fails closed at every step: any
- * refusal (or a vision error/timeout) stops the pipeline and reports why.
+ * The full photo-to-ticker pipeline: check the per-user cooldown, pick a size, download it, check
+ * its size and magic bytes, moderate the image, moderate the caption/name, then store it. Fails
+ * closed at every step: any refusal (or a vision error/timeout) stops the pipeline and reports
+ * why. The cooldown is checked first, before any paid download or moderation call, so retrying
+ * inside the window costs nothing.
  */
 export async function handlePhotoSubmission(
   deps: PhotoIntakeDeps,
   input: PhotoIntakeInput,
 ): Promise<PhotoIntakeResult> {
+  const cooldown = deps.cooldownSeconds(input.uid);
+  if (cooldown > 0) {
+    return { accepted: false, reply: `One photo per minute on the ticker: ${cooldown}s left.` };
+  }
+
   const size = selectPhotoSize(input.sizes);
   if (!size) return { accepted: false, reply: "That photo is too small for the ticker." };
 
