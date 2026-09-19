@@ -11,6 +11,7 @@ Custom routes cannot live under `/api` (Mastra reserves it).
 |---|---|---|
 | `GET /status?uid=<uid>` | poll every 1 s; `uid` counts you as a viewer | `Status` (below) |
 | `POST /say` | `{ uid, name, text, source?: "web"｜"voice" }` | `200 {ok:true,id}` · `422 {ok:false,reason}` moderated out · `409 {ok:false,reason}` already queued · `503` moderation down · `400` invalid |
+| `POST /say-voice` | `multipart/form-data`: `uid`, `name`, `audio` (blob) | same codes as `/say` (with `source: "voice"`), plus `415 {ok:false,reason}` bad audio type/size and `422 {ok:false,reason,heard}` when nothing was heard; every response from this route that has a transcript includes `heard: "<transcript>"` |
 | `POST /like` | `{ uid }` | `{ ok: boolean }` — false if already liked, own scene, or nothing on air |
 | `GET /viewer-token` | — | `{ applicationId, sessionId, token }` subscribe-only Vonage token |
 | `GET /announcer/:clipId` | — | `audio/mpeg`, the spoken "up next" line for one steer; 404 once forgotten |
@@ -19,6 +20,14 @@ Custom routes cannot live under `/api` (Mastra reserves it).
 `uid`: 8–64 chars of `[A-Za-z0-9_-]`, random, generated client-side, kept in `localStorage`.
 `name`: 1–24 chars, moderated together with the idea. `text`: 1–280 chars.
 
+`/say-voice`'s `uid`/`name` follow the same rules as `/say`, reused not redeclared. `audio`: 1 KB–1.5
+MB, declared type one of `audio/webm`, `audio/ogg`, `audio/mp4`, `audio/wav` (Safari's `audio/mp4`
+recordings are accepted — verified live against SLNG, docs/cards/slng.md, src/mastra/transcriber.ts).
+The same per-client rate limit as `/say` applies before the SLNG call, since each call costs money.
+The route: validate the boundary → rate limit → transcribe on SLNG (`transcriber.ts`) → trim → if
+under 3 characters, `422` with the reason above → otherwise the idea runs through the exact same
+moderated path as `/say` (`handleSay` in `say.ts`), with `source: "voice"`.
+
 ```ts
 interface SpendSnapshot {
   totalUsd: number;               // sum of the four byProvider.usd figures
@@ -26,7 +35,7 @@ interface SpendSnapshot {
   byProvider: {
     fal: { usd; seconds };              // Director open-session seconds
     nebius: { usd; inputTokens; outputTokens; calls };
-    slng: { usd; audioSeconds; calls }; // TTS audio, mp3 bytes / 16000
+    slng: { usd; audioSeconds; calls }; // TTS output + STT input audio, pooled
     vonage: { usd; participantMinutes };
   };
   scenes: { ideaId; name; text; usd; byProvider }[];  // last 8 aired scenes, newest first
