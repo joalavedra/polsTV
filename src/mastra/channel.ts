@@ -8,6 +8,9 @@
 
 export type Source = "web" | "telegram" | "voice";
 
+/** "new" replaces the scene on air; "amend" changes one thing about it while it keeps running. */
+export type IdeaKind = "new" | "amend";
+
 export interface Idea {
   id: number;
   uid: string;
@@ -15,6 +18,10 @@ export interface Idea {
   text: string;
   source: Source;
   at: number;
+  kind: IdeaKind;
+  /** kind "amend" only: the ideaId of the scene this amend was written for. Dropped, never applied
+   * to a different scene, if that scene is no longer on air by the time this amend's turn comes. */
+  forIdeaId?: number;
 }
 
 export interface Scene {
@@ -26,6 +33,8 @@ export interface Scene {
   prompt: string;
   airedAt: number;
   likes: number;
+  /** Viewer amendments applied to this scene while it stayed on air, oldest first. */
+  amends: { name: string; text: string }[];
 }
 
 export interface Steer {
@@ -50,8 +59,8 @@ export interface Status {
   viewers: number;
   /** The scene on air, with its prompter's current karma so viewers can watch it move. */
   now: (Scene & { karma: number }) | null;
-  steering: { name: string; text: string } | null;
-  queue: { id: number; name: string; text: string; karma: number }[];
+  steering: { name: string; text: string; kind: IdeaKind } | null;
+  queue: { id: number; name: string; text: string; karma: number; kind: IdeaKind }[];
   chat: ChatLine[];
   rank: { name: string; karma: number }[];
   ts: number;
@@ -63,10 +72,15 @@ export type AddResult = { ok: true; idea: Idea } | { ok: false; reason: string }
 export interface SteerOutcome {
   onAir: Scene | undefined;
   ended: Scene | undefined;
+  /** True when `onAir` is the same scene continuing after an applied amend, not a new one taking
+   * over. Callers use this to skip the "you're on air" DM, which only makes sense once per scene. */
+  amended: boolean;
 }
 
 /** Measured steer-to-screen latency is 17-20 s; steering faster than this just stacks prompts. */
 export const STEER_GAP_MS = 25_000;
+/** More than this and the scene stops resembling what the original prompter asked for. */
+export const MAX_AMENDS_PER_SCENE = 3;
 const VIEWER_TTL_MS = 10_000;
 const BROADCASTER_TTL_MS = 15_000;
 const CHAT_KEEP = 50;
@@ -86,12 +100,42 @@ export class Channel {
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  /** Queue an already-moderated idea. One queued idea per user keeps the queue fair and spam-proof. */
-  addIdea(input: { uid: string; name: string; text: string; source: Source }): AddResult {
+  /**
+   * Queue an already-moderated idea or amend. One queued contribution per user, of either kind,
+   * keeps the queue fair and spam-proof. An amend ("kind: amend") is only accepted while a scene
+   * is on air, is tagged with the scene it targets (`forIdeaId`), and is refused once that scene
+   * has already taken its three changes.
+   */
+  addIdea(input: {
+    uid: string;
+    name: string;
+    text: string;
+    source: Source;
+    kind?: IdeaKind;
+  }): AddResult {
+    const kind = input.kind ?? "new";
     if (this.queue.some((idea) => idea.uid === input.uid)) {
       return { ok: false, reason: "You already have an idea in the queue. Wait until it airs." };
     }
-    const idea: Idea = { id: this.nextId++, at: this.now(), ...input };
+    const forIdeaId = kind === "amend" ? this.scene?.ideaId : undefined;
+    if (kind === "amend") {
+      if (forIdeaId === undefined) {
+        return { ok: false, reason: "Nothing is on air to change yet; send an idea first." };
+      }
+      if ((this.scene?.amends.length ?? 0) >= MAX_AMENDS_PER_SCENE) {
+        return { ok: false, reason: "This scene has had its three changes; send a new idea." };
+      }
+    }
+    const idea: Idea = {
+      id: this.nextId++,
+      at: this.now(),
+      uid: input.uid,
+      name: input.name,
+      text: input.text,
+      source: input.source,
+      kind,
+      ...(forIdeaId !== undefined ? { forIdeaId } : {}),
+    };
     this.queue.push(idea);
     this.player(input.uid, input.name);
     this.chat.push({
@@ -105,9 +149,25 @@ export class Channel {
     return { ok: true, idea };
   }
 
-  /** Highest-karma submitter first, then oldest. Does not remove the idea. */
+  /** Amends (oldest first) ahead of new ideas (highest karma, then oldest). Does not remove it. */
   nextIdea(): Idea | undefined {
     return this.orderedQueue()[0];
+  }
+
+  /** Remove a queued idea without steering it — used to drop an amend whose target scene ended. */
+  dropIdea(id: number): void {
+    this.queue = this.queue.filter((idea) => idea.id !== id);
+  }
+
+  /**
+   * True when a queued amend can no longer be applied: its target scene is no longer on air, or
+   * that scene already has its full three changes. Either way it must be dropped, never steered.
+   * Always false for a "new" idea.
+   */
+  isStaleAmend(idea: Idea): boolean {
+    if (idea.kind !== "amend") return false;
+    const scene = this.scene;
+    return !scene || scene.ideaId !== idea.forIdeaId || scene.amends.length >= MAX_AMENDS_PER_SCENE;
   }
 
   /** 1-based serving-order position of a user's queued idea, or undefined if they have none. */
@@ -121,11 +181,14 @@ export class Channel {
     return this.queue.find((idea) => idea.uid === uid);
   }
 
-  /** Serving order: highest karma first, then oldest. */
+  /** Serving order: queued amends first (oldest first), then new ideas (highest karma, then oldest) —
+   * an amend is about what is on screen right now, so it jumps the line ahead of a fresh scene. */
   private orderedQueue(): Idea[] {
-    return [...this.queue].sort(
-      (a, b) => this.karmaOf(b.uid) - this.karmaOf(a.uid) || a.at - b.at,
-    );
+    const amends = this.queue.filter((idea) => idea.kind === "amend").sort((a, b) => a.at - b.at);
+    const newIdeas = this.queue
+      .filter((idea) => idea.kind === "new")
+      .sort((a, b) => this.karmaOf(b.uid) - this.karmaOf(a.uid) || a.at - b.at);
+    return [...amends, ...newIdeas];
   }
 
   /** True when no steer is in flight and the previous one has had time to reach the screen. */
@@ -151,17 +214,25 @@ export class Channel {
   }
 
   /**
-   * Close the in-flight steer. Applied: the idea becomes the scene on air. Rejected: the idea is
-   * dropped and the scene on air is unchanged. Returns the scene that went on air (`onAir`) and the
-   * one it replaced (`ended`), each undefined when nothing changed.
+   * Close the in-flight steer. Applied and "new": the idea becomes the scene on air, replacing
+   * whatever was there. Applied and "amend": the scene on air stays the same scene (same prompter,
+   * likes, karma target) but records the amendment and adopts the new steering prompt. Rejected:
+   * the idea is dropped and the scene on air is unchanged. Returns the scene that went on air
+   * (`onAir`), the one it replaced (`ended`, always undefined for an amend), and whether this was
+   * an amend rather than a new scene taking over (`amended`).
    */
   resolveSteer(steerId: number, applied: boolean): SteerOutcome {
     const steer = this.pending;
-    if (!steer || steer.steerId !== steerId) return { onAir: undefined, ended: undefined };
+    if (!steer || steer.steerId !== steerId) {
+      return { onAir: undefined, ended: undefined, amended: false };
+    }
     this.pending = undefined;
     const idea = this.queue.find((queued) => queued.id === steer.ideaId);
     this.queue = this.queue.filter((queued) => queued.id !== steer.ideaId);
-    if (!applied || !idea) return { onAir: undefined, ended: undefined };
+    if (!applied || !idea) return { onAir: undefined, ended: undefined, amended: false };
+    if (idea.kind === "amend") {
+      return { onAir: this.applyAmend(idea, steer.prompt), ended: undefined, amended: true };
+    }
     const ended = this.scene;
     this.scene = {
       ideaId: idea.id,
@@ -171,9 +242,27 @@ export class Channel {
       prompt: steer.prompt,
       airedAt: this.now(),
       likes: 0,
+      amends: [],
     };
     this.likedBy.clear();
-    return { onAir: this.scene, ended };
+    return { onAir: this.scene, ended, amended: false };
+  }
+
+  /**
+   * Apply an amend to the scene it targeted, in place: only its prompt and `amends` list change,
+   * so likes and karma keep tracking the original prompter. Callers must only reach this for an
+   * amend `isStaleAmend` still says is live — index.ts drops any other before it is ever steered,
+   * and only one steer is ever in flight, so the scene cannot change out from under an amend
+   * between `beginSteer` and `resolveSteer`.
+   */
+  private applyAmend(idea: Idea, prompt: string): Scene {
+    const scene = this.scene;
+    if (!scene || scene.ideaId !== idea.forIdeaId || scene.amends.length >= MAX_AMENDS_PER_SCENE) {
+      throw new Error(`amend idea ${idea.id} can no longer be applied to its scene`);
+    }
+    scene.prompt = prompt;
+    scene.amends = [...scene.amends, { name: idea.name, text: idea.text }];
+    return scene;
   }
 
   /** One like per viewer per scene, never your own. Karma goes to whoever prompted the scene. */
@@ -208,7 +297,9 @@ export class Channel {
       live: now - this.broadcasterSeenAt < BROADCASTER_TTL_MS,
       viewers: this.viewers.size,
       now: this.scene ? { ...this.scene, karma: this.karmaOf(this.scene.uid) } : null,
-      steering: steeringIdea ? { name: steeringIdea.name, text: steeringIdea.text } : null,
+      steering: steeringIdea
+        ? { name: steeringIdea.name, text: steeringIdea.text, kind: steeringIdea.kind }
+        : null,
       queue: this.queue
         .filter((idea) => idea.id !== this.pending?.ideaId)
         .map((idea) => ({
@@ -216,6 +307,7 @@ export class Channel {
           name: idea.name,
           text: idea.text,
           karma: this.karmaOf(idea.uid),
+          kind: idea.kind,
         })),
       // Karma is read at status time so the stars in chat move as likes come in.
       chat: this.chat.map(({ uid, ...line }) => ({ ...line, karma: this.karmaOf(uid) })),
