@@ -144,8 +144,8 @@ Prerequisites: Node ≥ 22.13, pnpm.
 Append `?director=off` to the broadcaster URL to exercise everything except fal: the queue,
 moderation, Nebius steer-writing, the SLNG announcer and the Vonage publish all run, but the canvas
 shows a channel ident card instead of opening a Director session. A real Director session bills per
-second of video generated — list price is $0.08/s ($288/hour), with a $4.80 minimum per session
-opened — so keep `?director=off` on until you mean to spend it.
+second it is open, with a 60-second minimum per session. Our key was billed $0.02/s ($72/hour) during
+the event; fal's list price is $0.08/s. Keep `?director=off` on until you mean to spend it.
 
 ## Configuration
 
