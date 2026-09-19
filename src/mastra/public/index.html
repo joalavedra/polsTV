@@ -1392,15 +1392,13 @@
       }
       return el;
     }
-    /** The viewer's own karma, derived from the rank list by name for now — swap for a
-     *  GET me?uid= lookup once that endpoint exists. */
-    function myKarma(rank, name) {
-      return rank.find((r) => r.name === name)?.karma ?? 0;
-    }
-    function renderYouChip(rank) {
+    // The viewer's own karma comes from the pitch block's `me` poll (keyed by uid, so two viewers
+    // with the same nickname no longer share a number). Both blocks once declared `myKarma`, and
+    // a duplicate declaration in a module is a SyntaxError that kills the whole page.
+    function renderYouChip() {
       const name = getName();
       youChip.hidden = !name;
-      if (name) youKarma.textContent = String(myKarma(rank, name));
+      if (name) youKarma.textContent = String(myKarma);
     }
 
     // ---------- chat scroll pinning ----------
