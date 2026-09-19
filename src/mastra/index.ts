@@ -54,12 +54,43 @@ const falProxy = createRouteHandler({
 // edits show up without a restart.
 const pageDirs = [process.cwd(), import.meta.dirname];
 
+// Link previews need absolute URLs, and only the server knows where it is published.
+const publicUrl = (process.env["PUBLIC_URL"] ?? "http://localhost:4111").replace(/\/+$/, "");
+
 async function page(file: "index.html" | "broadcaster.html"): Promise<string> {
   for (const dir of pageDirs) {
     const html = await readFile(join(dir, file), "utf8").catch(() => undefined);
-    if (html !== undefined) return html;
+    if (html !== undefined) return html.replaceAll("__PUBLIC_URL__", publicUrl);
   }
   throw new Error(`${file} not found in any of: ${pageDirs.join(", ")}`);
+}
+
+// Exactly these files: the same folder also holds mastra.db in dev, which must never be served.
+const assets: Record<string, string> = {
+  "og.jpg": "image/jpeg",
+  "logo.jpg": "image/jpeg",
+  "icon.png": "image/png",
+};
+
+async function asset(file: string): Promise<Buffer | undefined> {
+  if (!Object.hasOwn(assets, file)) return undefined;
+  for (const dir of pageDirs) {
+    const bytes = await readFile(join(dir, file)).catch(() => undefined);
+    if (bytes !== undefined) return bytes;
+  }
+  return undefined;
+}
+
+// Moderation is a paid LLM call, so one idea per client every few seconds is plenty.
+const SAY_MIN_GAP_MS = 3_000;
+const lastSayAt = new Map<string, number>();
+
+function sayTooSoon(client: string): boolean {
+  const now = Date.now();
+  if (now - (lastSayAt.get(client) ?? 0) < SAY_MIN_GAP_MS) return true;
+  lastSayAt.set(client, now);
+  if (lastSayAt.size > 5_000) lastSayAt.clear();
+  return false;
 }
 
 export const mastra = new Mastra({
@@ -72,6 +103,18 @@ export const mastra = new Mastra({
     port: Number(process.env["PORT"] ?? 4111),
     // Studio would otherwise claim "/" and shadow the viewer page.
     studioBase: "/studio",
+    // Mastra's own /api (agents, memory, tools) and Studio have no auth. They stay usable on
+    // localhost, but any request that arrived through a tunnel or reverse proxy is refused:
+    // those always carry a forwarding header, and a client cannot strip one the proxy adds.
+    middleware: [
+      async (c, next) => {
+        const path = c.req.path;
+        const internal = path === "/api" || path.startsWith("/api/") || path.startsWith("/studio");
+        const proxied = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for");
+        if (internal && proxied) return c.notFound();
+        return next();
+      },
+    ],
     apiRoutes: [
       registerApiRoute("/", {
         method: "GET",
@@ -83,6 +126,20 @@ export const mastra = new Mastra({
         method: "GET",
         requiresAuth: false,
         handler: async (c) => c.html(await page("broadcaster.html")),
+      }),
+
+      registerApiRoute("/assets/:file", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => {
+          const file = c.req.param("file");
+          const bytes = await asset(file);
+          if (!bytes) return c.notFound();
+          return c.body(new Uint8Array(bytes), 200, {
+            "content-type": assets[file] ?? "application/octet-stream",
+            "cache-control": "public, max-age=3600",
+          });
+        },
       }),
 
       registerApiRoute("/status", {
@@ -101,6 +158,11 @@ export const mastra = new Mastra({
         handler: async (c) => {
           const body = sayBody.safeParse(await c.req.json().catch(() => null));
           if (!body.success) return c.json({ ok: false, reason: "Invalid message." }, 400);
+          // Only proxied (public) traffic is limited; localhost has no forwarding header.
+          const client = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for");
+          if (client && sayTooSoon(client)) {
+            return c.json({ ok: false, reason: "Slow down a little." }, 429);
+          }
           let verdict;
           try {
             verdict = await moderate(body.data.text, body.data.name);

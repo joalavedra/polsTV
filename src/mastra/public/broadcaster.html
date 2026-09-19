@@ -192,32 +192,39 @@
     lines.forEach((l, i) => ctx.fillText(l, x, y + i * lineHeight));
   }
 
+  // The ident is the channel's idle picture. The logo is 16:9 like the canvas, so it fills it.
+  const identLogo = new Image();
+  identLogo.src = "assets/logo.jpg";
+
   function drawIdentFrame() {
     const ctx = els.stage.getContext("2d");
     const w = els.stage.width;
     const h = els.stage.height;
     ctx.fillStyle = "#0a0a0f";
     ctx.fillRect(0, 0, w, h);
+    if (identLogo.complete && identLogo.naturalWidth > 0) {
+      // A slow drift keeps the stream visibly alive, so a frozen picture means a real problem.
+      const drift = 1.04 + Math.sin(Date.now() / 4000) * 0.02;
+      const dw = w * drift;
+      const dh = h * drift;
+      ctx.drawImage(identLogo, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    }
+    ctx.fillStyle = "rgba(10, 10, 15, 0.78)";
+    ctx.fillRect(0, h - 120, w, 120);
     ctx.textAlign = "center";
-    ctx.fillStyle = "#e8e8f0";
-    ctx.font = "bold 72px system-ui, sans-serif";
-    ctx.fillText("polsTV", w / 2, h / 2 - 40);
-    ctx.font = "28px system-ui, sans-serif";
-    ctx.fillStyle = "#8888a0";
-    ctx.fillText("send an idea to wake the channel", w / 2, h / 2 + 20);
-    ctx.font = "22px monospace";
-    ctx.fillText(new Date().toLocaleTimeString(), w / 2, h / 2 + 70);
+    ctx.font = "bold 34px system-ui, sans-serif";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText("send an idea to wake the channel", w / 2, h - 68);
+    ctx.font = "20px monospace";
+    ctx.fillStyle = "#c8c8d8";
+    ctx.fillText(new Date().toLocaleTimeString(), w / 2, h - 30);
     if (state.ident.lastPrompt) {
+      ctx.fillStyle = "rgba(10, 10, 15, 0.78)";
+      ctx.fillRect(0, 0, w, 110);
       ctx.font = "18px monospace";
       ctx.fillStyle = "#55dd88";
-      wrapText(ctx, state.ident.lastPrompt, w / 2, h - 100, w - 160, 24);
+      wrapText(ctx, state.ident.lastPrompt, w / 2, 36, w - 160, 24);
     }
-    const t = Date.now() / 1000;
-    const x = w / 2 + Math.sin(t) * (w / 2 - 60);
-    ctx.beginPath();
-    ctx.arc(x, h - 140, 10, 0, Math.PI * 2);
-    ctx.fillStyle = "#ff5566";
-    ctx.fill();
   }
 
   function startIdentLoop() {

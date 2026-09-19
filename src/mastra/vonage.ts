@@ -1,8 +1,9 @@
 /**
  * Vonage Video fan-out: one routed session, the broadcaster publishes, every viewer subscribes.
  *
- * ponytail: the session is created at boot and lives in memory. A server restart makes a new
- * session, so open viewer pages must re-fetch /viewer-token. Persist the id if that ever matters.
+ * The session id must outlive the process: the broadcaster keeps publishing into the session it
+ * joined, so a restarted server that minted a fresh one left every viewer subscribed to an empty
+ * room (live pill on, OFF AIR card up). Set VONAGE_SESSION_ID once and restarts become invisible.
  */
 import { Vonage } from "@vonage/server-sdk";
 import { MediaMode } from "@vonage/video";
@@ -28,9 +29,17 @@ const vonage = new Vonage({
 let sessionId: Promise<string> | undefined;
 
 function session(): Promise<string> {
+  const pinned = process.env["VONAGE_SESSION_ID"];
+  if (pinned) return Promise.resolve(pinned);
   sessionId ??= vonage.video
     .createSession({ mediaMode: MediaMode.ROUTED })
-    .then((created) => created.sessionId)
+    .then((created) => {
+      console.warn(
+        `VONAGE_SESSION_ID is not set, so this session dies with the process. ` +
+          `Add to .env: VONAGE_SESSION_ID="${created.sessionId}"`,
+      );
+      return created.sessionId;
+    })
     .catch((error: unknown) => {
       sessionId = undefined;
       throw new Error("Vonage createSession failed; check VONAGE_APPLICATION_ID and the private key", {
