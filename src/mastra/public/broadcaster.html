@@ -7,7 +7,9 @@
     margin: 0;
     background: #111;
     color: #ddd;
-    font: 13px/1.4 system-ui, sans-serif;
+    font:
+      13px/1.4 system-ui,
+      sans-serif;
   }
   #layout {
     display: flex;
@@ -209,15 +211,17 @@
       const dh = h * drift;
       ctx.drawImage(identLogo, (w - dw) / 2, (h - dh) / 2, dw, dh);
     }
+    // Moved up clear of the ticker bar when it has items, so the two never overlap.
+    const bandFloor = h - (state.ticker.items.length > 0 ? TICKER_BAR_HEIGHT : 0);
     ctx.fillStyle = "rgba(10, 10, 15, 0.78)";
-    ctx.fillRect(0, h - 120, w, 120);
+    ctx.fillRect(0, bandFloor - 120, w, 120);
     ctx.textAlign = "center";
     ctx.font = "bold 34px system-ui, sans-serif";
     ctx.fillStyle = "#ffffff";
-    ctx.fillText("send an idea to wake the channel", w / 2, h - 68);
+    ctx.fillText("send an idea to wake the channel", w / 2, bandFloor - 68);
     ctx.font = "20px monospace";
     ctx.fillStyle = "#c8c8d8";
-    ctx.fillText(new Date().toLocaleTimeString(), w / 2, h - 30);
+    ctx.fillText(new Date().toLocaleTimeString(), w / 2, bandFloor - 30);
     if (state.ident.lastPrompt) {
       ctx.fillStyle = "rgba(10, 10, 15, 0.78)";
       ctx.fillRect(0, 0, w, 110);
@@ -225,6 +229,7 @@
       ctx.fillStyle = "#55dd88";
       wrapText(ctx, state.ident.lastPrompt, w / 2, 36, w - 160, 24);
     }
+    drawTickerBar(ctx, w, h);
   }
 
   function startIdentLoop() {
@@ -240,6 +245,7 @@
   function drawDirectorFrame(video) {
     const ctx = els.stage.getContext("2d");
     ctx.drawImage(video, 0, 0, els.stage.width, els.stage.height);
+    drawTickerBar(ctx, els.stage.width, els.stage.height);
   }
 
   function scheduleDirectorFrame(video) {
@@ -265,6 +271,135 @@
 
   function grabCanvasBlob() {
     return new Promise((resolve) => els.stage.toBlob(resolve, "image/jpeg", 0.85));
+  }
+
+  // ---- ticker: Telegram photo crawl along the bottom of the broadcast picture -------------
+  // Polls GET ticker every 10s; drawTickerBar() is called every frame from drawDirectorFrame()
+  // and drawIdentFrame() below. Scroll position comes from performance.now(), never a per-frame
+  // counter, so it neither speeds up nor stutters when the frame rate changes.
+
+  const TICKER_BAR_HEIGHT = 76;
+  const TICKER_SCROLL_PX_PER_SEC = 60;
+  const TICKER_THUMB_SIZE = 64;
+  const TICKER_THUMB_PAD = 12;
+  const TICKER_SLOT_WIDTH = 320;
+  const TICKER_TEXT_MAX_WIDTH = TICKER_SLOT_WIDTH - TICKER_THUMB_SIZE - TICKER_THUMB_PAD - 24;
+  const TICKER_POLL_MS = 10_000;
+
+  state.ticker = { items: [], render: new Map(), pollBusy: false };
+
+  /** Binary search so a long caption costs ~6 measureText calls, not one per character. */
+  function ellipsise(ctx, text, maxWidth) {
+    if (ctx.measureText(text).width <= maxWidth) return text;
+    let lo = 0;
+    let hi = text.length;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (ctx.measureText(text.slice(0, mid) + "…").width <= maxWidth) lo = mid;
+      else hi = mid - 1;
+    }
+    return text.slice(0, lo) + "…";
+  }
+
+  /** Decodes the image and pre-ellipsises its text once per item id; every later frame just
+   * reads this cached entry back out instead of re-measuring text or re-creating the Image. */
+  function tickerRenderFor(item) {
+    let entry = state.ticker.render.get(item.id);
+    if (entry) return entry;
+    const img = new Image();
+    img.src = item.url; // page-relative: resolves under a path prefix (site.com/polstv/) too
+    const ctx = els.stage.getContext("2d");
+    ctx.font = "bold 18px system-ui, sans-serif";
+    const name = ellipsise(ctx, item.name, TICKER_TEXT_MAX_WIDTH);
+    ctx.font = "16px system-ui, sans-serif";
+    const caption = item.caption ? ellipsise(ctx, item.caption, TICKER_TEXT_MAX_WIDTH) : "";
+    entry = { img, name, caption };
+    state.ticker.render.set(item.id, entry);
+    return entry;
+  }
+
+  async function pollTickerInner() {
+    let data;
+    try {
+      data = await fetchJson("ticker");
+    } catch (e) {
+      return log("ticker_poll_failed", { message: String(e) });
+    }
+    state.ticker.items = data.items;
+    const seen = new Set(data.items.map((item) => item.id));
+    for (const id of state.ticker.render.keys()) {
+      if (!seen.has(id)) state.ticker.render.delete(id);
+    }
+    for (const item of data.items) tickerRenderFor(item);
+  }
+
+  async function pollTicker() {
+    if (state.ticker.pollBusy) return;
+    state.ticker.pollBusy = true;
+    try {
+      await pollTickerInner();
+    } finally {
+      state.ticker.pollBusy = false;
+    }
+  }
+
+  /** Centre-cropped (source rectangle) 64x64 thumbnail with rounded corners via a clip path. */
+  function drawTickerThumb(ctx, img, x, y) {
+    if (!img.complete || img.naturalWidth === 0) return;
+    const side = Math.min(img.naturalWidth, img.naturalHeight);
+    const sx = (img.naturalWidth - side) / 2;
+    const sy = (img.naturalHeight - side) / 2;
+    const radius = 10;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.arcTo(x + TICKER_THUMB_SIZE, y, x + TICKER_THUMB_SIZE, y + TICKER_THUMB_SIZE, radius);
+    ctx.arcTo(x + TICKER_THUMB_SIZE, y + TICKER_THUMB_SIZE, x, y + TICKER_THUMB_SIZE, radius);
+    ctx.arcTo(x, y + TICKER_THUMB_SIZE, x, y, radius);
+    ctx.arcTo(x, y, x + TICKER_THUMB_SIZE, y, radius);
+    ctx.closePath();
+    ctx.clip();
+    ctx.drawImage(img, sx, sy, side, side, x, y, TICKER_THUMB_SIZE, TICKER_THUMB_SIZE);
+    ctx.restore();
+  }
+
+  function drawTickerItem(ctx, item, x, y) {
+    const { img, name, caption } = tickerRenderFor(item);
+    drawTickerThumb(ctx, img, x, y);
+    const textX = x + TICKER_THUMB_SIZE + TICKER_THUMB_PAD;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    ctx.font = "bold 18px system-ui, sans-serif";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(name, textX, y + 30);
+    if (caption) {
+      ctx.font = "16px system-ui, sans-serif";
+      ctx.fillStyle = "#cfcfd8";
+      ctx.fillText(caption, textX, y + 52);
+    }
+  }
+
+  /**
+   * Draws the 76px bottom bar for one frame: a semi-opaque strip with items scrolling
+   * right-to-left in an endless loop (the item list repeats via modulo indexing, so the bar
+   * never looks empty-ish with only one or two items). Draws nothing when the ticker is empty.
+   */
+  function drawTickerBar(ctx, w, h) {
+    const items = state.ticker.items;
+    if (items.length === 0) return;
+    const barTop = h - TICKER_BAR_HEIGHT;
+    ctx.fillStyle = "rgba(8, 8, 12, 0.82)";
+    ctx.fillRect(0, barTop, w, TICKER_BAR_HEIGHT);
+
+    const scrolled = (performance.now() / 1000) * TICKER_SCROLL_PX_PER_SEC;
+    const thumbY = barTop + (TICKER_BAR_HEIGHT - TICKER_THUMB_SIZE) / 2;
+    const startK = Math.floor(scrolled / TICKER_SLOT_WIDTH) - 1;
+    for (let k = startK; ; k += 1) {
+      const x = k * TICKER_SLOT_WIDTH - scrolled;
+      if (x >= w) break;
+      const index = ((k % items.length) + items.length) % items.length;
+      drawTickerItem(ctx, items[index], x, thumbY);
+    }
   }
 
   // ---- audio graph: always exists once started, Director's track feeds in via a gain node ---
@@ -559,9 +694,11 @@
     // OLD session tears down the NEW one during rotation. Only the current session is heard.
     const token = Symbol("director-session");
     d.token = token;
-    const ifCurrent = (handler) => (...args) => {
-      if (state.director.token === token) handler(...args);
-    };
+    const ifCurrent =
+      (handler) =>
+      (...args) => {
+        if (state.director.token === token) handler(...args);
+      };
     d.session = fal.realtime.open(wma("minimax/h3-max/director"), {
       receive: ["video", "audio"],
       onState: ifCurrent((s) => log("director_state", { state: s })),
@@ -732,7 +869,9 @@
     setInterval(pollNextSteer, 3000);
     setInterval(pollStatusForIdle, 5000);
     setInterval(tickClock, 1000);
+    setInterval(pollTicker, TICKER_POLL_MS);
     pollNextSteer();
+    pollTicker();
     log("started", {});
   }
 
