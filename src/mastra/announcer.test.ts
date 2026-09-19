@@ -1,29 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { announcerLine, clip, synthesise } from "./announcer";
-
-describe("announcerLine", () => {
-  it("reads a short idea in full", () => {
-    expect(announcerLine("Timba", "a snake bursts out of a toilet")).toBe(
-      "Up next, from Timba: a snake bursts out of a toilet",
-    );
-  });
-
-  it("collapses whitespace and newlines", () => {
-    expect(announcerLine("Ana", "  a cat\n\n on   a boat ")).toBe("Up next, from Ana: a cat on a boat");
-  });
-
-  it("cuts a long idea at a word boundary", () => {
-    const long = "a very long idea about clowns ".repeat(10);
-    const line = announcerLine("Ana", long);
-    expect(line.endsWith(", and more.")).toBe(true);
-    expect(line.length).toBeLessThan(160);
-    expect(line).not.toMatch(/clow, and more\.$/);
-  });
-
-  it("still returns something for one unbroken long word", () => {
-    expect(announcerLine("Ana", "x".repeat(300)).startsWith("Up next, from Ana: x")).toBe(true);
-  });
-});
+import { clip, synthesise } from "./announcer";
 
 describe("synthesise", () => {
   afterEach(() => {
@@ -51,6 +27,18 @@ describe("synthesise", () => {
   it("fails fast when the key is missing", async () => {
     vi.stubEnv("SLNG_API_KEY", "");
     await expect(synthesise("clip-c", "hello")).rejects.toThrow(/SLNG_API_KEY/);
+  });
+
+  it("prepends the silent [excited] tone marker to the text sent to SLNG", async () => {
+    vi.stubEnv("SLNG_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => {
+      return new Response(new Uint8Array([1]), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await synthesise("clip-d", "A word from Ana. Hello.");
+    const init = fetchMock.mock.calls[0]?.[1];
+    const body = JSON.parse(init?.body as string) as { text: string };
+    expect(body.text).toBe("[excited] A word from Ana. Hello.");
   });
 
   it("forgets the oldest clips", async () => {
