@@ -12,8 +12,10 @@ import { Memory } from "@mastra/memory";
 import { z } from "zod";
 import type { AddResult, Idea, Scene, Status } from "./channel";
 import { channel, STEER_GAP_MS } from "./channel";
-import type { Verdict } from "./showrunner";
+import type { ModerationOutcome } from "./showrunner";
 import { MAX_IDEA_CHARS, moderate } from "./showrunner";
+import type { TokenUsage } from "./spend";
+import { spend } from "./spend";
 
 const TELEGRAM_PREFIX = "telegram:";
 const DEFAULT_PUBLIC_URL = "http://localhost:4111";
@@ -63,9 +65,17 @@ const sceneHistory = new SceneHistory();
 // --- submit_idea -----------------------------------------------------------------------------
 
 export interface SubmitIdeaDeps {
-  moderate: (text: string, name: string) => Promise<Verdict>;
+  moderate: (text: string, name: string) => Promise<ModerationOutcome>;
   addIdea: (input: { uid: string; name: string; text: string; source: "telegram" }) => AddResult;
   queuePosition: (uid: string) => number | undefined;
+  /** Meters exactly like the web `/say` route — see spend.ts. `target` is the idea id once
+   * queued, or "rejected" if it never got a queue slot. */
+  recordModeration: (
+    target: number | "rejected",
+    name: string,
+    text: string,
+    usage: TokenUsage,
+  ) => void;
 }
 
 export interface SubmitIdeaResult {
@@ -84,16 +94,24 @@ export async function submitIdeaLogic(
   name: string,
   text: string,
 ): Promise<SubmitIdeaResult> {
-  let verdict: Verdict;
+  let outcome: ModerationOutcome;
   try {
-    verdict = await deps.moderate(text, name);
+    outcome = await deps.moderate(text, name);
   } catch (error) {
     console.error(`moderation failed for telegram idea from ${uid}:`, error);
     return { queued: false, reason: "Moderation is unavailable right now, try again in a bit." };
   }
-  if (!verdict.ok) return { queued: false, reason: verdict.reason };
+  const { verdict, usage } = outcome;
+  if (!verdict.ok) {
+    deps.recordModeration("rejected", name, text, usage);
+    return { queued: false, reason: verdict.reason };
+  }
   const added = deps.addIdea({ uid, name, text, source: "telegram" });
-  if (!added.ok) return { queued: false, reason: added.reason };
+  if (!added.ok) {
+    deps.recordModeration("rejected", name, text, usage);
+    return { queued: false, reason: added.reason };
+  }
+  deps.recordModeration(added.idea.id, added.idea.name, added.idea.text, usage);
   const position = deps.queuePosition(uid) ?? 1;
   return { queued: true, position, waitSeconds: position * WAIT_PER_SLOT_SECONDS };
 }
@@ -126,6 +144,7 @@ export const submitIdea = createTool({
         moderate,
         addIdea: (input) => channel.addIdea(input),
         queuePosition: (u) => channel.queuePosition(u),
+        recordModeration: (target, n, t, usage) => spend.recordModeration(target, n, t, usage),
       },
       uid,
       name,

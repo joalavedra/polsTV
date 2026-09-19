@@ -5,6 +5,7 @@
  */
 import { Agent } from "@mastra/core/agent";
 import { z } from "zod";
+import type { TokenUsage } from "./spend";
 
 export const MAX_IDEA_CHARS = 280;
 
@@ -13,6 +14,16 @@ const verdictSchema = z.object({
   reason: z.string().max(120),
 });
 export type Verdict = z.infer<typeof verdictSchema>;
+
+export interface ModerationOutcome {
+  verdict: Verdict;
+  usage: TokenUsage;
+}
+
+export interface SteerWriteOutcome {
+  prompt: string;
+  usage: TokenUsage;
+}
 
 export const moderator = new Agent({
   id: "moderator",
@@ -56,23 +67,57 @@ Write one steering prompt, 40-80 words, that moves the shot from the current sce
 Reply with the steering prompt only. No preamble, no quotes.`,
 });
 
+let warnedMissingNebiusUsage = false;
+
+/**
+ * Token usage off a Mastra `generate()` result. `@mastra/core@1.67.0`'s usage object uses
+ * `inputTokens`/`outputTokens` (verified against its shipped `.d.ts` — `LanguageModelV2Usage`
+ * in `@ai-sdk/provider-v5` — not the alternate `promptTokens`/`completionTokens` naming some
+ * providers use). This is a cost *estimate* feature: missing usage records as 0 and warns once,
+ * never throws, so a Nebius response shape we didn't expect can't take down moderation/steering.
+ */
+function nebiusUsage(
+  usage: { inputTokens: number | undefined; outputTokens: number | undefined } | undefined,
+  source: string,
+): TokenUsage {
+  const inputTokens = usage?.inputTokens;
+  const outputTokens = usage?.outputTokens;
+  if (inputTokens === undefined || outputTokens === undefined) {
+    if (!warnedMissingNebiusUsage) {
+      warnedMissingNebiusUsage = true;
+      console.warn(
+        `Nebius usage missing on a ${source} result; recording $0 for it (and any more like it)`,
+      );
+    }
+    return { inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0 };
+  }
+  return { inputTokens, outputTokens };
+}
+
 /** Judge one idea and its author's nickname. Throws if the model call fails: fail closed. */
-export async function moderate(text: string, name: string): Promise<Verdict> {
+export async function moderate(text: string, name: string): Promise<ModerationOutcome> {
   if (text.length > MAX_IDEA_CHARS) {
-    return { ok: false, reason: `Keep it under ${MAX_IDEA_CHARS} characters.` };
+    return {
+      verdict: { ok: false, reason: `Keep it under ${MAX_IDEA_CHARS} characters.` },
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
   }
   const result = await moderator.generate(`<name>${name}</name>\n<idea>${text}</idea>`, {
     structuredOutput: { schema: verdictSchema },
   });
-  return verdictSchema.parse(result.object);
+  const verdict = verdictSchema.parse(result.object);
+  return { verdict, usage: nebiusUsage(result.usage, "moderator") };
 }
 
 /** Turn an approved idea into a steering prompt that transitions from the scene on air. */
-export async function writeSteer(currentScene: string | undefined, idea: string): Promise<string> {
+export async function writeSteer(
+  currentScene: string | undefined,
+  idea: string,
+): Promise<SteerWriteOutcome> {
   const result = await sceneWriter.generate(
     `CURRENT SCENE: ${currentScene ?? "(nothing yet, this opens the channel)"}\n\nVIEWER IDEA: <idea>${idea}</idea>`,
   );
   const prompt = result.text.trim();
   if (!prompt) throw new Error(`scene writer returned an empty prompt for idea: ${idea}`);
-  return prompt;
+  return { prompt, usage: nebiusUsage(result.usage, "scene writer") };
 }

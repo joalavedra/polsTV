@@ -645,8 +645,12 @@
   async function pollNextSteerInner() {
     if (!state.secret) return;
     let res;
+    // Tells the server a Director session is (or is about to be) open, so it can meter fal
+    // seconds on this heartbeat. Spend accounting only — never gates opening a session.
+    const directorOpenPhases = new Set(["OPENING", "LIVE", "ROTATING"]);
+    const spendQuery = directorOpenPhases.has(state.phase) ? "?director=1" : "";
     try {
-      res = await fetch(`b/${state.secret}/next-steer`);
+      res = await fetch(`b/${state.secret}/next-steer${spendQuery}`);
     } catch (e) {
       return log("next_steer_failed", { message: String(e) });
     }

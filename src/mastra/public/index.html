@@ -108,6 +108,78 @@
     z-index: 10;
   }
 
+  .top-left {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    left: 12px;
+    z-index: 10;
+  }
+  #spend-pill { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  #spend-popover {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 56px);
+    left: 12px;
+    width: min(90vw, 340px);
+    max-height: min(70vh, 520px);
+    overflow-y: auto;
+    z-index: 15;
+    padding: .9rem;
+    display: flex;
+    flex-direction: column;
+    gap: .6rem;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-radius: var(--radius);
+    color: var(--text);
+  }
+  .spend-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+  .spend-head strong { font-size: .8rem; letter-spacing: .03em; text-transform: uppercase; }
+  #spend-close {
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 1.2rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: .1rem .35rem;
+  }
+  .spend-note { margin: 0; font-size: .72rem; color: var(--text-dim); }
+  .spend-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: .6rem;
+    padding: .35rem 0;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .spend-row:last-child { border-bottom: none; }
+  .spend-row-name { font-weight: 700; text-transform: capitalize; }
+  .spend-row-detail { font-size: .7rem; color: var(--text-dim); margin-top: .1rem; }
+  .spend-row-usd { font-weight: 700; text-align: right; white-space: nowrap; }
+  .spend-h3 {
+    font-size: .75rem;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin: .2rem 0 0;
+  }
+  .spend-scene { font-size: .8rem; }
+  .spend-scene-title { margin: 0; font-weight: 700; }
+  .spend-scene-breakdown { margin: .15rem 0 0; font-size: .7rem; color: var(--text-dim); }
+
+  @media (max-width: 820px) {
+    #spend-popover {
+      left: 12px;
+      right: 12px;
+      width: auto;
+      max-height: none;
+      bottom: calc(52vh + 12px);
+    }
+  }
+
   #rail {
     position: fixed;
     left: 12px;
@@ -336,9 +408,9 @@
   @keyframes heart-fade { from { opacity: 1; } to { opacity: 0; } }
 
   body.chrome-hidden .chrome { display: none; }
-  /* #panel sets its own `display: flex`; an ID selector outranks the class rule
+  /* #panel/#spend-popover set their own `display: flex`; an ID selector outranks the class rule
      above, so restate it here with enough specificity to actually hide it. */
-  body.chrome-hidden #panel, body.chrome-hidden #rail { display: none; }
+  body.chrome-hidden #panel, body.chrome-hidden #rail, body.chrome-hidden #spend-popover { display: none; }
 </style>
 </head>
 <body>
@@ -366,6 +438,24 @@
     <div class="pill chrome" id="viewer-pill"><span id="viewer-count">0 watching</span></div>
     <button type="button" class="pill pill-btn chrome" id="mute-btn" aria-pressed="false">mute</button>
     <button type="button" class="pill pill-btn" id="interface-btn" aria-pressed="false">interface</button>
+  </div>
+
+  <div class="top-left chrome">
+    <button type="button" class="pill pill-btn" id="spend-pill" aria-haspopup="dialog"
+      aria-expanded="false" aria-controls="spend-popover">$0.00</button>
+  </div>
+
+  <div class="chrome" id="spend-popover" role="dialog" aria-label="Spend estimate" hidden>
+    <div class="spend-head">
+      <strong>Spend &mdash; estimate</strong>
+      <button type="button" id="spend-close" aria-label="Close spend popover">&times;</button>
+    </div>
+    <p class="spend-note">
+      Computed from published/billed rates below, not a real invoice.
+    </p>
+    <div id="spend-providers"></div>
+    <p class="spend-h3">Last scenes</p>
+    <div id="spend-scenes"></div>
   </div>
 
   <aside id="rail" class="chrome" aria-label="Steering and queue">
@@ -494,6 +584,11 @@
     const viewerCount = document.getElementById("viewer-count");
     const muteBtn = document.getElementById("mute-btn");
     const interfaceBtn = document.getElementById("interface-btn");
+    const spendPill = document.getElementById("spend-pill");
+    const spendPopover = document.getElementById("spend-popover");
+    const spendClose = document.getElementById("spend-close");
+    const spendProviders = document.getElementById("spend-providers");
+    const spendScenes = document.getElementById("spend-scenes");
     const steeringBody = document.getElementById("steering-body");
     const railQueue = document.getElementById("rail-queue");
     const paneQueue = document.getElementById("pane-queue");
@@ -585,6 +680,7 @@
     interfaceBtn.addEventListener("click", () => {
       const hidden = document.body.classList.toggle("chrome-hidden");
       interfaceBtn.setAttribute("aria-pressed", String(hidden));
+      if (hidden) closeSpendPopover({ returnFocus: false });
     });
 
     // ---------- mute toggle ----------
@@ -598,6 +694,103 @@
       applyMute();
       muteBtn.textContent = wantMuted ? "unmute" : "mute";
       muteBtn.setAttribute("aria-pressed", String(wantMuted));
+    });
+
+    // ---------- spend pill + popover ----------
+    // Every figure here is an ESTIMATE computed server-side from published/billed rates
+    // (src/mastra/spend.ts) — never a real invoice. See docs/CONTRACT.md's GET /spend.
+    function formatUsd(usd) {
+      if (!(usd > 0)) return "$0.00";
+      if (usd < 0.0001) return "<$0.0001";
+      return `$${usd.toFixed(usd < 0.01 ? 4 : 2)}`;
+    }
+    function truncate(text, max) {
+      return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text;
+    }
+    const PROVIDER_DETAIL = {
+      fal: (p) => `${p.seconds.toFixed(1)}s Director @ $${RATES_CACHE.fal.usd}/s`,
+      nebius: (p) =>
+        `${p.inputTokens.toLocaleString()} in / ${p.outputTokens.toLocaleString()} out tok, ` +
+        `${p.calls} calls @ $${RATES_CACHE.nebius.inputUsdPerMillionTokens}` +
+        `/$${RATES_CACHE.nebius.outputUsdPerMillionTokens} per 1M`,
+      slng: (p) =>
+        `${p.audioSeconds.toFixed(1)}s audio, ${p.calls} calls @ ` +
+        `${RATES_CACHE.slng.microdollarsPerAudioMinute}µ$/min`,
+      vonage: (p) => `${p.participantMinutes.toFixed(1)} participant-min @ $${RATES_CACHE.vonage.usd}/min`,
+    };
+    let RATES_CACHE = { fal: {}, nebius: {}, slng: {}, vonage: {} };
+    function renderSpendRow(container, name, usd, detail) {
+      const row = h("div", "spend-row");
+      const left = h("div");
+      left.append(h("p", "spend-row-name", name), h("p", "spend-row-detail", detail));
+      row.append(left, h("span", "spend-row-usd", formatUsd(usd)));
+      container.appendChild(row);
+    }
+    function renderSpend(data) {
+      RATES_CACHE = data.rates;
+      spendPill.textContent = formatUsd(data.totalUsd);
+      spendProviders.textContent = "";
+      for (const name of ["fal", "nebius", "slng", "vonage"]) {
+        renderSpendRow(spendProviders, name, data.byProvider[name].usd, PROVIDER_DETAIL[name](data.byProvider[name]));
+      }
+      renderSpendRow(spendProviders, "rejected / not aired", data.notAired.usd, "moderation on ideas that never aired");
+      renderSpendRow(spendProviders, "idle", data.idle.usd, "fal + Vonage time with nothing on air");
+      spendScenes.textContent = "";
+      if (data.scenes.length === 0) {
+        spendScenes.appendChild(h("p", "spend-row-detail", "No scenes aired yet."));
+      }
+      for (const scene of data.scenes) {
+        const row = h("div", "spend-scene");
+        row.appendChild(h("p", "spend-scene-title", `${scene.name} — ${truncate(scene.text, 40)}`));
+        const parts = ["fal", "nebius", "slng", "vonage"]
+          .map((p) => `${p} ${formatUsd(scene.byProvider[p])}`)
+          .join(" · ");
+        row.appendChild(h("p", "spend-scene-breakdown", `${formatUsd(scene.usd)} · ${parts}`));
+        spendScenes.appendChild(row);
+      }
+    }
+    async function fetchSpend() {
+      try {
+        const res = await fetch("spend");
+        if (!res.ok) return;
+        renderSpend(await res.json());
+      } catch { /* transient network hiccup, next tick retries */ }
+    }
+    let spendTimer = null;
+    let spendOpen = false;
+    function startSpendPolling() {
+      clearInterval(spendTimer);
+      fetchSpend();
+      spendTimer = setInterval(fetchSpend, spendOpen ? 2000 : 5000);
+    }
+    function stopSpendPolling() {
+      clearInterval(spendTimer);
+      spendTimer = null;
+    }
+    function openSpendPopover() {
+      spendOpen = true;
+      spendPopover.hidden = false;
+      spendPill.setAttribute("aria-expanded", "true");
+      startSpendPolling();
+      spendClose.focus();
+    }
+    function closeSpendPopover({ returnFocus = true } = {}) {
+      if (!spendOpen) return;
+      spendOpen = false;
+      spendPopover.hidden = true;
+      spendPill.setAttribute("aria-expanded", "false");
+      startSpendPolling();
+      if (returnFocus) spendPill.focus();
+    }
+    spendPill.addEventListener("click", () => (spendOpen ? closeSpendPopover() : openSpendPopover()));
+    spendClose.addEventListener("click", () => closeSpendPopover());
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && spendOpen) closeSpendPopover();
+    });
+    document.addEventListener("click", (event) => {
+      if (!spendOpen) return;
+      if (spendPopover.contains(event.target) || spendPill.contains(event.target)) return;
+      closeSpendPopover({ returnFocus: false });
     });
 
     // ---------- tap-to-like ----------
@@ -798,10 +991,18 @@
       statusTimer = null;
     }
     document.addEventListener("visibilitychange", () => {
-      if (document.hidden) stopPolling();
-      else startPolling();
+      if (document.hidden) {
+        stopPolling();
+        stopSpendPolling();
+      } else {
+        startPolling();
+        startSpendPolling();
+      }
     });
-    if (!document.hidden) startPolling();
+    if (!document.hidden) {
+      startPolling();
+      startSpendPolling();
+    }
 
     // ---------- Vonage subscribe-only session, with backoff reconnect ----------
     let reconnectDelay = 1000;
