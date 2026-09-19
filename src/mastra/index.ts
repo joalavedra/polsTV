@@ -7,9 +7,21 @@ import { LibSQLStore } from "@mastra/libsql";
 import { Mastra } from "@mastra/core/mastra";
 import { registerApiRoute } from "@mastra/core/server";
 import { z } from "zod";
-import { announcerLine, clip, synthesise } from "./announcer";
+import { clip, synthesise } from "./announcer";
+import type { Idea } from "./channel";
 import { channel } from "./channel";
-import { MAX_IDEA_CHARS, moderate, moderator, sceneWriter, writeSteer } from "./showrunner";
+import {
+  MAX_IDEA_CHARS,
+  moderate,
+  moderator,
+  narrator,
+  pitchModerator,
+  pitchWriter,
+  sceneWriter,
+  writeSteer,
+  writeVoiceOver,
+} from "./showrunner";
+import type { TokenUsage } from "./spend";
 import { spend } from "./spend";
 import { notifySceneChange, showrunner } from "./telegram";
 import { videoAccess } from "./vonage";
@@ -38,6 +50,29 @@ function accrueHeartbeat(directorOpen: boolean): void {
     target: status.now?.ideaId ?? "idle",
     participants: status.viewers + 1, // + the broadcaster's own publisher connection
   });
+}
+
+interface SteerVoice {
+  usage: TokenUsage;
+  clipId: string | undefined;
+  url: string | undefined;
+}
+
+/**
+ * The line the channel's voice reads over the scene a steer is about to bring up: written by the
+ * narrator, then synthesised by SLNG. The clip is garnish — a TTS failure is logged and the steer
+ * goes out silent rather than late.
+ */
+async function narrateSteer(idea: Idea): Promise<SteerVoice> {
+  const voiceOver = await writeVoiceOver(idea.name, idea.text);
+  try {
+    const clipId = await synthesise(`steer-${idea.id}`, voiceOver.line);
+    // Page-relative, so it still resolves when the app is served under a path prefix.
+    return { usage: voiceOver.usage, clipId, url: `announcer/${clipId}` };
+  } catch (error) {
+    console.error(`announcer failed for idea ${idea.id}, steering without it:`, error);
+    return { usage: voiceOver.usage, clipId: undefined, url: undefined };
+  }
 }
 
 // Web callers may not claim a "telegram:" uid; those only come from the Telegram channel.
@@ -114,7 +149,7 @@ function sayTooSoon(client: string): boolean {
 }
 
 export const mastra = new Mastra({
-  agents: { moderator, sceneWriter, showrunner },
+  agents: { moderator, narrator, pitchModerator, pitchWriter, sceneWriter, showrunner },
   // Channels (Telegram) need storage on the Mastra instance or subscriptions, dedup and approvals
   // reset on every restart. Also backs the showrunner's per-user memory (docs/cards/mastra-nebius).
   storage: new LibSQLStore({ id: "mastra-storage", url: "file:./mastra.db" }),
@@ -252,22 +287,16 @@ export const mastra = new Mastra({
           if (!idea || !channel.canSteer() || writingSteer) return c.body(null, 204);
           writingSteer = true;
           try {
-            // The announcer is garnish: a TTS failure is logged and the steer goes out without it.
-            const [steerWrite, announcer] = await Promise.all([
+            const [steerWrite, voice] = await Promise.all([
               writeSteer(channel.status().now?.prompt, idea.text),
-              synthesise(`steer-${idea.id}`, announcerLine(idea.name, idea.text))
-                // Page-relative, so it still resolves when the app is served under a path prefix.
-                .then((clipId) => ({ clipId, url: `announcer/${clipId}` }))
-                .catch((error: unknown) => {
-                  console.error(`announcer failed for idea ${idea.id}, steering without it:`, error);
-                  return undefined;
-                }),
+              narrateSteer(idea),
             ]);
             spend.recordSteerWrite(idea.id, idea.name, idea.text, steerWrite.usage);
-            if (announcer) {
-              spend.recordTts(idea.id, idea.name, idea.text, clip(announcer.clipId)?.length ?? 0);
+            spend.recordSteerWrite(idea.id, idea.name, idea.text, voice.usage);
+            if (voice.clipId) {
+              spend.recordTts(idea.id, idea.name, idea.text, clip(voice.clipId)?.length ?? 0);
             }
-            return c.json(channel.beginSteer(idea.id, steerWrite.prompt, announcer?.url));
+            return c.json(channel.beginSteer(idea.id, steerWrite.prompt, voice.url));
           } finally {
             writingSteer = false;
           }

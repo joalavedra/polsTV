@@ -141,7 +141,10 @@ export class SpendLedger {
     if (target !== "rejected") this.chargePending(target, name, text, "nebius", usd);
   }
 
-  /** Charge one steer-writing call for an idea already picked to steer next. */
+  /**
+   * Charge one Nebius writing call — the steering prompt, or the narrator line read over it — to
+   * an idea already picked to steer next.
+   */
   recordSteerWrite(ideaId: number, name: string, text: string, usage: TokenUsage): void {
     const usd = this.chargeNebius(usage);
     this.notAiredUsd += usd;
