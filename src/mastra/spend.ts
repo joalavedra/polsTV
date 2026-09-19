@@ -87,6 +87,8 @@ export interface SpendSnapshot {
   idle: { usd: number };
   /** Sponsored voice-overs (pitch.ts). They play over whatever is on air, so they have no scene. */
   pitches: { usd: number };
+  /** Nebius cost of ticker photo/caption moderation — never tied to a scene (see recordTicker) */
+  ticker: { usd: number };
 }
 
 function nebiusCost(usage: TokenUsage): number {
@@ -117,7 +119,7 @@ interface PendingIdea {
  * `markAired` moves that cost out of `notAired` and into its scene. fal and Vonage time is charged
  * directly to whichever scene is on air, or to `idle` when nothing is. A sponsored voice-over has
  * no scene of its own, so its cost goes to `pitches`. See spend.test.ts for the accounting
- * invariants (every dollar lands in exactly one of: a scene, notAired, idle, pitches).
+ * invariants (every dollar lands in exactly one of: a scene, notAired, idle, pitches, ticker).
  */
 export class SpendLedger {
   private fal = { usd: 0, seconds: 0 };
@@ -127,6 +129,7 @@ export class SpendLedger {
   private notAiredUsd = 0;
   private idleUsd = 0;
   private pitchesUsd = 0;
+  private tickerUsd = 0;
   private scenes: SceneSpend[] = [];
   private pending = new Map<number, PendingIdea>();
 
@@ -170,6 +173,16 @@ export class SpendLedger {
   /** Charge one SLNG clip for a sponsored voice-over. */
   recordPitchTts(audioBytes: number): void {
     this.pitchesUsd += this.chargeSlng(audioBytes);
+  }
+
+  /**
+   * Charge one ticker Nebius call (image moderation or caption/name moderation). Ticker
+   * submissions are never tied to a queued idea, so this scene-less line — not `notAired`, which
+   * is idea-specific — is where all of it lands, whatever the verdict.
+   */
+  recordTicker(usage: TokenUsage): void {
+    const usd = this.chargeNebius(usage);
+    this.tickerUsd += usd;
   }
 
   /** Charge fal Director open-session seconds to the scene on air, or "idle" when none is. */
@@ -241,6 +254,7 @@ export class SpendLedger {
       notAired: { usd: this.notAiredUsd },
       idle: { usd: this.idleUsd },
       pitches: { usd: this.pitchesUsd },
+      ticker: { usd: this.tickerUsd },
     };
   }
 

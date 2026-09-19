@@ -17,6 +17,8 @@ Custom routes cannot live under `/api` (Mastra reserves it).
 | `GET /viewer-token` | — | `{ applicationId, sessionId, token }` subscribe-only Vonage token |
 | `GET /announcer/:clipId` | — | `audio/mpeg`, one spoken clip: a steer's narrator line, or a pitch's ad read; 404 once forgotten |
 | `GET /spend` | — | `SpendSnapshot` (below), the spend pill's data. Not under `/status`: that route is polled every second by every viewer, spend only needs a few-second cadence. |
+| `GET /ticker` | — | `{ items: [{ id, name, caption, url }] }`, the images currently on the ticker (newest last). `url` is page-relative (`ticker/<id>`, no leading slash — the app is served under `/polstv/` in production). |
+| `GET /ticker/:id` | — | The image bytes, with the right `content-type` and `cache-control: public, max-age=600`. `404` once the item is unknown or has expired. |
 
 `uid`: 8–64 chars of `[A-Za-z0-9_-]`, random, generated client-side, kept in `localStorage`.
 `name`: 1–24 chars, moderated together with the idea. `text`: 1–280 chars.
@@ -37,6 +39,7 @@ interface SpendSnapshot {
   notAired: { usd };               // moderation/steer-write/TTS cost of ideas that never aired
   idle: { usd };                   // fal/Vonage time while nothing was on air
   pitches: { usd };                // sponsored voice-overs: they have no scene of their own
+  ticker: { usd };                 // Nebius cost of ticker photo/caption moderation
 }
 ```
 
@@ -44,6 +47,7 @@ Every figure is an ESTIMATE computed from src/mastra/spend.ts's published rate c
 real invoice. `scenes` is a rolling window of the last 8 aired scenes; once a 9th airs, the oldest
 drops out of this list but its cost stays folded into `byProvider`/`totalUsd` — so
 `sum(scenes[].usd) + notAired.usd + idle.usd + pitches.usd` only equals `totalUsd` while 8 or fewer
+`sum(scenes[].usd) + notAired.usd + idle.usd + ticker.usd` only equals `totalUsd` while 8 or fewer
 scenes have aired in this process's lifetime.
 
 ```ts

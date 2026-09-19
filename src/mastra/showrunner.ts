@@ -162,7 +162,7 @@ let warnedMissingNebiusUsage = false;
  * providers use). This is a cost *estimate* feature: missing usage records as 0 and warns once,
  * never throws, so a Nebius response shape we didn't expect can't take down moderation/steering.
  */
-function nebiusUsage(
+export function nebiusUsage(
   usage: { inputTokens: number | undefined; outputTokens: number | undefined } | undefined,
   source: string,
 ): TokenUsage {
