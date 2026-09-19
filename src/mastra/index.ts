@@ -46,6 +46,8 @@ const falProxy = createRouteHandler({
 export const mastra = new Mastra({
   agents: { moderator, sceneWriter },
   server: {
+    // Hosts inject PORT; parallel dev servers set it to avoid the 4111 default.
+    port: Number(process.env["PORT"] ?? 4111),
     apiRoutes: [
       registerApiRoute("/status", {
         method: "GET",
