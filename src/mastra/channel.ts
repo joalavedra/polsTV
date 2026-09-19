@@ -56,6 +56,12 @@ export interface Status {
 
 export type AddResult = { ok: true; idea: Idea } | { ok: false; reason: string };
 
+/** What `resolveSteer` changed: the scene that went on air (if applied) and the one it replaced. */
+export interface SteerOutcome {
+  onAir: Scene | undefined;
+  ended: Scene | undefined;
+}
+
 /** Measured steer-to-screen latency is 17-20 s; steering faster than this just stacks prompts. */
 export const STEER_GAP_MS = 25_000;
 const VIEWER_TTL_MS = 10_000;
@@ -98,9 +104,25 @@ export class Channel {
 
   /** Highest-karma submitter first, then oldest. Does not remove the idea. */
   nextIdea(): Idea | undefined {
+    return this.orderedQueue()[0];
+  }
+
+  /** 1-based serving-order position of a user's queued idea, or undefined if they have none. */
+  queuePosition(uid: string): number | undefined {
+    const index = this.orderedQueue().findIndex((idea) => idea.uid === uid);
+    return index === -1 ? undefined : index + 1;
+  }
+
+  /** A user's own queued idea, if they have one (at most one per user). */
+  myIdea(uid: string): Idea | undefined {
+    return this.queue.find((idea) => idea.uid === uid);
+  }
+
+  /** Serving order: highest karma first, then oldest. */
+  private orderedQueue(): Idea[] {
     return [...this.queue].sort(
       (a, b) => this.karmaOf(b.uid) - this.karmaOf(a.uid) || a.at - b.at,
-    )[0];
+    );
   }
 
   /** True when no steer is in flight and the previous one has had time to reach the screen. */
@@ -122,15 +144,17 @@ export class Channel {
 
   /**
    * Close the in-flight steer. Applied: the idea becomes the scene on air. Rejected: the idea is
-   * dropped. Returns the new scene when one went on air.
+   * dropped and the scene on air is unchanged. Returns the scene that went on air (`onAir`) and the
+   * one it replaced (`ended`), each undefined when nothing changed.
    */
-  resolveSteer(steerId: number, applied: boolean): Scene | undefined {
+  resolveSteer(steerId: number, applied: boolean): SteerOutcome {
     const steer = this.pending;
-    if (!steer || steer.steerId !== steerId) return undefined;
+    if (!steer || steer.steerId !== steerId) return { onAir: undefined, ended: undefined };
     this.pending = undefined;
     const idea = this.queue.find((queued) => queued.id === steer.ideaId);
     this.queue = this.queue.filter((queued) => queued.id !== steer.ideaId);
-    if (!applied || !idea) return undefined;
+    if (!applied || !idea) return { onAir: undefined, ended: undefined };
+    const ended = this.scene;
     this.scene = {
       ideaId: idea.id,
       uid: idea.uid,
@@ -141,7 +165,7 @@ export class Channel {
       likes: 0,
     };
     this.likedBy.clear();
-    return this.scene;
+    return { onAir: this.scene, ended };
   }
 
   /** One like per viewer per scene, never your own. Karma goes to whoever prompted the scene. */
@@ -205,3 +229,6 @@ export class Channel {
     return created;
   }
 }
+
+/** The one shared channel instance for this process. index.ts and telegram.ts both import it. */
+export const channel = new Channel();
