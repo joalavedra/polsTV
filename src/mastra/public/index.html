@@ -1708,6 +1708,31 @@
       });
     }
     connectViewer();
-  </script>
+  
+    // ---------- one-shot capability report (diag:start) ----------
+    // Phones cannot show us a console. Eight seconds after load, tell the server what this browser
+    // can do and what the player ended up showing, so a report like "incompatible browser on my
+    // iPhone" can be answered from the server log instead of guessed at.
+    setTimeout(() => {
+      const video = subscriberContainer.querySelector("video");
+      const report = {
+        ua: navigator.userAgent,
+        vendor: navigator.vendor,
+        secure: window.isSecureContext,
+        standalone: navigator.standalone === true,
+        rtc: typeof RTCPeerConnection,
+        mediaDevices: typeof navigator.mediaDevices,
+        ws: typeof WebSocket,
+        ot: typeof OT === "undefined" ? null : OT.version,
+        otOk: typeof OT === "undefined" ? null : OT.checkSystemRequirements(),
+        otAlert: Boolean(document.querySelector(".OT_dialog, .OT_alert-header, .OT_root.OT_dialog")),
+        video: video ? `${video.videoWidth}x${video.videoHeight}` : "none",
+        card: document.getElementById("offair-text")?.textContent ?? "",
+        w: window.innerWidth,
+      };
+      fetch("diag", { method: "POST", body: JSON.stringify(report), keepalive: true }).catch(() => {});
+    }, 8000);
+    // ---------- (diag:end) ----------
+</script>
 </body>
 </html>

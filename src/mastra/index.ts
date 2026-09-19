@@ -264,6 +264,20 @@ export const mastra = new Mastra({
         },
       }),
 
+      // Viewers on phones cannot show us their console. The page posts one capability report per
+      // load; it is only logged. This is how "it says incompatible browser on my iPhone" gets facts.
+      registerApiRoute("/diag", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          const client = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for") ?? "local";
+          if (postTooSoon(`diag:${client}`)) return c.body(null, 429);
+          const report = (await c.req.text()).slice(0, 2_000).replace(/[\r\n]+/g, " ");
+          console.info(`client_diag ${report}`);
+          return c.body(null, 204);
+        },
+      }),
+
       registerApiRoute("/status", {
         method: "GET",
         requiresAuth: false,
