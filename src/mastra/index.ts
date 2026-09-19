@@ -10,7 +10,10 @@ import { z } from "zod";
 import { clip, synthesise } from "./announcer";
 import type { Idea } from "./channel";
 import { channel } from "./channel";
+import { detailsById, lookupCandidates } from "./catalog";
+import { concierge, handleTvAsk, runConciergeLive, type TvAskDeps, type TvAskInput } from "./concierge";
 import { livePitchDeps, PITCH_MIN_KARMA, pitchSlot, submitPitch } from "./pitch";
+import { buildSceneRecs, type RecsDeps, recsStore, sceneRecsJob } from "./recs";
 import type { SteerWriteOutcome } from "./showrunner";
 import { handleSay, type SayDeps, type SayInput } from "./say";
 import {
@@ -22,8 +25,10 @@ import {
   narrator,
   pitchModerator,
   pitchWriter,
+  recsWriter,
   sceneWriter,
   writeAmend,
+  writeRecsQuery,
   writeSteer,
   writeVoiceOver,
 } from "./showrunner";
@@ -113,6 +118,8 @@ const pitchResultBody = z.object({
   played: z.boolean(),
   reason: z.string().max(200).optional(),
 });
+// tv/ask's text-free fields: same uid rule as /say; text is optional here (a spoken ask has none).
+const tvAskFields = z.object({ uid, text: z.string().trim().min(1).max(MAX_IDEA_CHARS).optional() });
 
 // Which HTTP status each refusal from pitch.ts is worth. Everything else is a 200.
 const pitchStatus = {
@@ -163,7 +170,7 @@ const pageDirs = [process.cwd(), import.meta.dirname];
 // Link previews need absolute URLs, and only the server knows where it is published.
 const publicUrl = (process.env["PUBLIC_URL"] ?? "http://localhost:4111").replace(/\/+$/, "");
 
-async function page(file: "index.html" | "broadcaster.html"): Promise<string> {
+async function page(file: "index.html" | "broadcaster.html" | "tv.html"): Promise<string> {
   for (const dir of pageDirs) {
     const html = await readFile(join(dir, file), "utf8").catch(() => undefined);
     if (html !== undefined) return html.replaceAll("__PUBLIC_URL__", publicUrl);
@@ -247,8 +254,83 @@ const MAX_VOICE_AUDIO_BYTES = 1_500_000;
 const ACCEPTED_VOICE_TYPES = new Set(["audio/webm", "audio/ogg", "audio/mp4", "audio/wav"]);
 const MIN_HEARD_CHARS = 3;
 
+const recsDeps: RecsDeps = {
+  writeQuery: writeRecsQuery,
+  lookupCandidates,
+  recordTokens: (sceneId, usage) => spend.recordSceneTokens(sceneId, usage),
+};
+
+/** After a NEW scene airs (never an amend — see sceneRecsJob), turn it into "you might also like"
+ * picks. Runs after the steer-result response goes out; never blocks or fails the steer. */
+async function refreshSceneRecs(scene: { ideaId: number; prompt: string }): Promise<void> {
+  try {
+    recsStore.set(await buildSceneRecs(recsDeps, scene.ideaId, scene.prompt));
+  } catch (error) {
+    console.error(`recs failed for scene ${scene.ideaId}, showing none:`, error);
+  }
+}
+
+/** What the concierge is told about "what's on now": the scene on air and its own mood line, for
+ * when a viewer says "like this" or "something like what's on now". */
+function onAirContext(): { text: string; moodLine?: string } | undefined {
+  const now = channel.status().now;
+  if (!now) return undefined;
+  const moodLine = recsStore.get(now.ideaId)?.moodLine;
+  return { text: now.text, ...(moodLine ? { moodLine } : {}) };
+}
+
+const tvAskDeps: TvAskDeps = {
+  transcribe,
+  detailsFor: (about) => detailsById(about.id, about.mediaType),
+  onAirContext,
+  runConcierge: runConciergeLive,
+  synthesise,
+  clipBytes: (clipId) => clip(clipId)?.length ?? 0,
+  // The concierge's "put this on the channel" moment: same moderated path as /say, credited to the
+  // TV itself rather than the viewer, per the spec ("source: voice, name: TV").
+  submitVibe: async (input) => {
+    const outcome = await handleSay(sayDeps, { uid: input.uid, name: "TV", text: input.text, source: "voice" });
+    return { queued: outcome.status === 200 };
+  },
+  recordStt: (audioSeconds) => spend.recordConciergeStt(audioSeconds),
+  recordTokens: (usage) => spend.recordConciergeTokens(usage),
+  recordTts: (audioBytes) => spend.recordConciergeTts(audioBytes),
+};
+
+/** Multipart `about` field is a JSON string of {id, mediaType}; malformed or absent is a miss, not
+ * a fatal error — the ask still proceeds without that context. */
+function parseAbout(raw: FormDataEntryValue | null): TvAskInput["about"] {
+  if (typeof raw !== "string" || !raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "id" in parsed &&
+      "mediaType" in parsed &&
+      typeof parsed.id === "string" &&
+      (parsed.mediaType === "movie" || parsed.mediaType === "tv")
+    ) {
+      return { id: parsed.id, mediaType: parsed.mediaType };
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export const mastra = new Mastra({
-  agents: { moderator, sceneWriter, amendWriter, narrator, pitchModerator, pitchWriter, showrunner },
+  agents: {
+    moderator,
+    sceneWriter,
+    amendWriter,
+    narrator,
+    pitchModerator,
+    pitchWriter,
+    showrunner,
+    recsWriter,
+    concierge,
+  },
   // Channels (Telegram) need storage on the Mastra instance or subscriptions, dedup and approvals
   // reset on every restart. Also backs the showrunner's per-user memory (docs/cards/mastra-nebius).
   storage: new LibSQLStore({ id: "mastra-storage", url: "file:./mastra.db" }),
@@ -280,6 +362,12 @@ export const mastra = new Mastra({
         method: "GET",
         requiresAuth: false,
         handler: async (c) => c.html(await page("broadcaster.html")),
+      }),
+
+      registerApiRoute("/tv.html", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => c.html(await page("tv.html")),
       }),
 
       registerApiRoute("/assets/:file", {
@@ -344,6 +432,18 @@ export const mastra = new Mastra({
         method: "GET",
         requiresAuth: false,
         handler: async (c) => c.json(spend.snapshot()),
+      }),
+
+      // "You might also like": the current scene's picks, for tv.html's rail. Empty picks when
+      // nothing is on air or nothing verified against the catalog (recs.ts).
+      registerApiRoute("/recs", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => {
+          const nowIdeaId = channel.status().now?.ideaId;
+          const recs = nowIdeaId !== undefined ? recsStore.get(nowIdeaId) : undefined;
+          return c.json(recs ?? { sceneId: nowIdeaId ?? null, moodLine: "", picks: [] });
+        },
       }),
 
       // Public, read-only: the ticker bar broadcaster.html draws. Images arrive over Telegram
@@ -437,6 +537,48 @@ export const mastra = new Mastra({
           const stt = audioSeconds === undefined ? undefined : { audioSeconds };
           const outcome = await handleSay(sayDeps, voiceInput, stt);
           return c.json({ ...outcome.body, heard }, outcome.status);
+        },
+      }),
+
+      // multipart/form-data: uid, optional audio, optional text, optional about (JSON
+      // {id, mediaType}). The TV's conversational ask — see concierge.ts's handleTvAsk.
+      registerApiRoute("/tv/ask", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          const form = await c.req.formData().catch(() => undefined);
+          const audio = form?.get("audio");
+          const fields = tvAskFields.safeParse({ uid: form?.get("uid"), text: form?.get("text") || undefined });
+          if (!fields.success) return c.json({ ok: false, reason: "Invalid request." }, 400);
+          const hasAudio = audio instanceof Blob;
+          if (!hasAudio && !fields.data.text) {
+            return c.json({ ok: false, reason: "Say or type something first." }, 400);
+          }
+          if (hasAudio) {
+            const declaredType = declaredAudioType(audio);
+            if (!ACCEPTED_VOICE_TYPES.has(declaredType)) {
+              return c.json({ ok: false, reason: `Unsupported audio type: ${declaredType}.` }, 415);
+            }
+            if (audio.size < MIN_VOICE_AUDIO_BYTES || audio.size > MAX_VOICE_AUDIO_BYTES) {
+              return c.json({ ok: false, reason: "Recording is too short or too long." }, 415);
+            }
+          }
+          // Same limiter as /say and /say-voice: every path here costs money on success.
+          const client = clientIp(c);
+          if (client && postTooSoon(client)) {
+            return c.json({ ok: false, reason: "Slow down a little." }, 429);
+          }
+          const about = parseAbout(form?.get("about") ?? null);
+          const input: TvAskInput = {
+            uid: fields.data.uid,
+            ...(hasAudio
+              ? { audio: { bytes: new Uint8Array(await audio.arrayBuffer()), mime: declaredAudioType(audio) } }
+              : {}),
+            ...(fields.data.text ? { text: fields.data.text } : {}),
+            ...(about ? { about } : {}),
+          };
+          const outcome = await handleTvAsk(tvAskDeps, input);
+          return c.json(outcome.body, outcome.status);
         },
       }),
 
@@ -555,6 +697,8 @@ export const mastra = new Mastra({
             else spend.markNotAired(pendingBefore.ideaId);
           }
           void notifySceneChange({ onAir, ended, amended });
+          const recsJob = sceneRecsJob(onAir, amended);
+          if (recsJob) void refreshSceneRecs(recsJob);
           return c.json({ ok: true, onAir: onAir?.ideaId ?? null });
         },
       }),
