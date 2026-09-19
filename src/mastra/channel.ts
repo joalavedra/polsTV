@@ -48,7 +48,8 @@ export interface ChatLine {
 export interface Status {
   live: boolean;
   viewers: number;
-  now: Scene | null;
+  /** The scene on air, with its prompter's current karma so viewers can watch it move. */
+  now: (Scene & { karma: number }) | null;
   steering: { name: string; text: string } | null;
   queue: { id: number; name: string; text: string; karma: number }[];
   chat: ChatLine[];
@@ -206,7 +207,7 @@ export class Channel {
     return {
       live: now - this.broadcasterSeenAt < BROADCASTER_TTL_MS,
       viewers: this.viewers.size,
-      now: this.scene ?? null,
+      now: this.scene ? { ...this.scene, karma: this.karmaOf(this.scene.uid) } : null,
       steering: steeringIdea ? { name: steeringIdea.name, text: steeringIdea.text } : null,
       queue: this.queue
         .filter((idea) => idea.id !== this.pending?.ideaId)

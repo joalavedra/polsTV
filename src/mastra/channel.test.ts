@@ -185,6 +185,7 @@ describe("likes and karma", () => {
     expect(ctx.channel.like("carol")).toBe(true);
     expect(ctx.channel.karmaOf("ana")).toBe(2);
     expect(ctx.channel.status().now?.likes).toBe(2);
+    expect(ctx.channel.status().now?.karma).toBe(2);
   });
 
   it("does not let you like your own scene or like before anything aired", () => {
