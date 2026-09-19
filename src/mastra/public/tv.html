@@ -1,0 +1,785 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>polsTV: TV mode — talk to the channel</title>
+<meta name="description" content="polsTV on the big screen: the live channel, plus a talking recommender for what to watch.">
+<link rel="icon" type="image/png" href="assets/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bungee&display=swap" rel="stylesheet"
+  media="print" onload="this.media='all'">
+<style>
+  :root {
+    --bg: #050505;
+    --panel-bg: rgba(10, 10, 12, .72);
+    --panel-border: rgba(255, 255, 255, .18);
+    --text: #f5f5f5;
+    --text-dim: rgba(245, 245, 245, .72);
+    --accent: #ff4742;
+    --radius: 18px;
+    --display-font: 'Bungee', 'Arial Black', sans-serif;
+    --gap: clamp(10px, 1.2vw, 22px);
+    --text-base: clamp(28px, 1.7vw, 34px);
+    --text-lg: clamp(34px, 2.4vw, 48px);
+    --text-xl: clamp(44px, 3.4vw, 68px);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: var(--text-base);
+    overflow: hidden;
+  }
+  button { font: inherit; color: inherit; touch-action: manipulation; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+  :focus { outline: none; }
+  :focus-visible,
+  .card:focus,
+  #talk-btn:focus,
+  #mute-btn:focus,
+  #detail-actions button:focus {
+    outline: 5px solid var(--accent);
+    outline-offset: 6px;
+    border-radius: calc(var(--radius) / 2);
+  }
+
+  #video-wrap { position: fixed; inset: 0; background: #000; }
+  #subscriber-container { position: relative; width: 100%; height: 100%; overflow: hidden; }
+  #subscriber-container > * { position: absolute !important; inset: 0; }
+  #subscriber-container video, #subscriber-container object {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover;
+  }
+
+  #offair-card {
+    position: absolute;
+    inset: 0;
+    /* Opaque: a stale or frozen frame can still be sitting under here (hasStream true but
+       statusLive false), and off-air messaging over a confusing half-visible picture reads as
+       broken, not off-air. */
+    background: rgba(5, 5, 5, .94);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--gap);
+    text-align: center;
+    padding: 5vh 5vw;
+  }
+  #offair-card img { width: clamp(140px, 12vw, 220px); height: auto; border-radius: var(--radius); }
+  #offair-card p { margin: 0; font-size: var(--text-lg); color: var(--text-dim); max-width: 70vw; }
+
+  /* A gradient, not a solid panel, under the bottom third — keeps the picture visible while the
+     rail/captions stay legible over any frame. */
+  #bottom-scrim {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    height: 48vh;
+    background: linear-gradient(to top, rgba(0,0,0,.88) 0%, rgba(0,0,0,.55) 45%, transparent 100%);
+    pointer-events: none;
+  }
+
+  .safe { position: fixed; left: 5vw; right: 5vw; }
+  #ui-layer { bottom: 0; top: 0; display: flex; flex-direction: column; justify-content: flex-end; pointer-events: none; }
+  #ui-layer > * { pointer-events: auto; }
+
+  #mute-hint {
+    position: absolute;
+    top: calc(5vh + env(safe-area-inset-top, 0px));
+    right: 0;
+    background: var(--panel-bg);
+    border: 2px solid var(--panel-border);
+    border-radius: 999px;
+    padding: .5em 1em;
+    font-size: var(--text-base);
+  }
+
+  #captions { margin-bottom: var(--gap); max-width: 62vw; }
+  #captions p { margin: 0; text-shadow: 0 2px 10px rgba(0,0,0,.9); }
+  #caption-heard { font-size: var(--text-base); color: var(--text-dim); margin-bottom: .2em; }
+  #caption-say { font-size: var(--text-xl); font-weight: 700; line-height: 1.15; }
+
+  #rail { margin-bottom: calc(var(--gap) * 1.4); }
+  #rail-heading {
+    font-family: var(--display-font);
+    font-size: var(--text-lg);
+    margin: 0 0 var(--gap) 0;
+    text-shadow: 0 2px 10px rgba(0,0,0,.9);
+  }
+  #rail-row { display: flex; align-items: flex-end; gap: var(--gap); flex-wrap: wrap; }
+
+  .card {
+    background: var(--panel-bg);
+    border: 2px solid var(--panel-border);
+    border-radius: var(--radius);
+    padding: var(--gap);
+    display: flex;
+    flex-direction: column;
+    gap: .4em;
+    width: clamp(160px, 13vw, 230px);
+    text-align: left;
+    cursor: pointer;
+  }
+  .card .poster {
+    width: 100%;
+    aspect-ratio: 2 / 3;
+    object-fit: cover;
+    border-radius: calc(var(--radius) / 2);
+    background: #111;
+  }
+  .card .card-title { font-weight: 700; font-size: var(--text-base); line-height: 1.2; }
+  .card .card-meta { font-size: calc(var(--text-base) * .78); color: var(--text-dim); }
+
+  #talk-btn, #mute-btn {
+    background: var(--panel-bg);
+    border: 2px solid var(--panel-border);
+    border-radius: var(--radius);
+    padding: 0 1.2em;
+    height: clamp(64px, 6vw, 96px);
+    font-size: var(--text-base);
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: .5em;
+  }
+  #talk-btn.recording { background: var(--accent); border-color: var(--accent); }
+  #talk-status { margin: .6em 0 0; font-size: var(--text-base); color: var(--text-dim); }
+
+  #tv-footer {
+    display: flex;
+    align-items: center;
+    gap: 1em;
+    padding-bottom: calc(2vh + env(safe-area-inset-bottom, 0px));
+    font-size: calc(var(--text-base) * .6);
+    color: var(--text-dim);
+    flex-wrap: wrap;
+  }
+  #tv-footer img { width: 1.6em; height: 1.6em; border-radius: 4px; }
+
+  #detail-overlay { position: fixed; inset: 0; z-index: 20; }
+  #detail-backdrop {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+    background-color: #111;
+  }
+  #detail-scrim {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to top, rgba(0,0,0,.92) 15%, rgba(0,0,0,.55) 55%, rgba(0,0,0,.25) 100%);
+  }
+  #detail-panel {
+    top: auto;
+    bottom: 6vh;
+    max-width: 60vw;
+  }
+  #detail-title { font-family: var(--display-font); font-size: var(--text-xl); margin: 0 0 .2em; }
+  #detail-meta { font-size: var(--text-lg); color: var(--text-dim); margin: 0 0 .5em; }
+  #detail-overview { font-size: var(--text-base); line-height: 1.4; max-width: 56vw; margin: 0 0 var(--gap); }
+  #detail-actions { display: flex; gap: var(--gap); flex-wrap: wrap; }
+  #detail-actions button {
+    background: var(--panel-bg);
+    border: 2px solid var(--panel-border);
+    border-radius: var(--radius);
+    padding: .7em 1.3em;
+    font-size: var(--text-base);
+    font-weight: 700;
+  }
+
+  /* Top, not bottom: the rail owns the bottom third, and its height varies with how many cards
+     are showing — a fixed bottom position would sit on top of it. Offset below the mute hint
+     pill, which shares the top-right corner while muted. */
+  #talk-type-form {
+    position: fixed;
+    left: 5vw;
+    right: 5vw;
+    top: calc(5vh + env(safe-area-inset-top, 0px) + 6em);
+    z-index: 30;
+  }
+  #talk-text-input {
+    width: 100%;
+    font-size: var(--text-lg);
+    padding: .5em .8em;
+    border-radius: var(--radius);
+    border: 3px solid var(--accent);
+    background: rgba(5, 5, 5, .94);
+    color: var(--text);
+  }
+</style>
+</head>
+<body>
+  <div id="video-wrap">
+    <div id="subscriber-container"></div>
+    <div id="offair-card">
+      <img src="assets/logo.jpg" alt="">
+      <p id="offair-text">Connecting to the live channel…</p>
+    </div>
+  </div>
+
+  <div id="bottom-scrim"></div>
+
+  <div class="safe" id="ui-layer">
+    <div id="mute-hint">Press OK to unmute</div>
+
+    <div id="captions" hidden>
+      <p id="caption-heard"></p>
+      <p id="caption-say"></p>
+    </div>
+
+    <section id="rail" aria-label="You might also like">
+      <h2 id="rail-heading">You might also like…</h2>
+      <div id="rail-row">
+        <button type="button" class="card" id="card-0" hidden>
+          <img class="poster" alt="">
+          <span class="card-title"></span>
+          <span class="card-meta"></span>
+        </button>
+        <button type="button" class="card" id="card-1" hidden>
+          <img class="poster" alt="">
+          <span class="card-title"></span>
+          <span class="card-meta"></span>
+        </button>
+        <button type="button" class="card" id="card-2" hidden>
+          <img class="poster" alt="">
+          <span class="card-title"></span>
+          <span class="card-meta"></span>
+        </button>
+        <button type="button" id="talk-btn" aria-pressed="false">Talk</button>
+        <button type="button" id="mute-btn" aria-pressed="true">Unmute</button>
+      </div>
+      <p id="talk-status" hidden></p>
+    </section>
+
+    <footer id="tv-footer">
+      <img src="assets/logo.jpg" alt="">
+      <span>polsTV · TV mode</span>
+      <span>TV data from TVmaze</span>
+      <span>Film summaries from Wikipedia</span>
+    </footer>
+  </div>
+
+  <div id="detail-overlay" hidden>
+    <div id="detail-backdrop"></div>
+    <div id="detail-scrim"></div>
+    <div class="safe" id="detail-panel">
+      <h2 id="detail-title"></h2>
+      <p id="detail-meta"></p>
+      <p id="detail-overview"></p>
+      <div id="detail-actions">
+        <button type="button" id="detail-more">More like this</button>
+        <button type="button" id="detail-vibe">Put this vibe on the channel</button>
+        <button type="button" id="detail-close">Back</button>
+      </div>
+    </div>
+  </div>
+
+  <form id="talk-type-form" hidden>
+    <input id="talk-text-input" type="text" maxlength="280" autocomplete="off" aria-label="Type your question">
+  </form>
+
+  <script src="https://video.standard.vonage.com/v2/js/opentok.min.js"></script>
+  <script type="module">
+    // polsTV TV mode: the live channel full-bleed, a "you might also like" rail driven by the
+    // scene on air, and a conversational concierge (POST tv/ask) reachable by remote or voice.
+    // No framework, no build step — same approach as index.html/broadcaster.html.
+    const STATUS_POLL_MS = 2000;
+    const MAX_RECONNECT_DELAY_MS = 30_000;
+    const CAPTIONS_MS = 7000;
+    const FOR_YOU_MS = 60_000;
+
+    // --- uid: shared with the viewer page's own localStorage key, so one browser is one identity ---
+    function safeGet(key) { try { return localStorage.getItem(key); } catch { return null; } }
+    function safeSet(key, value) { try { localStorage.setItem(key, value); } catch { /* non-critical */ } }
+    function randomUrlSafe(len) {
+      const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+      const bytes = new Uint8Array(len);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
+    }
+    function getUid() {
+      let uid = safeGet("ts_uid");
+      if (!uid) { uid = randomUrlSafe(16); safeSet("ts_uid", uid); }
+      return uid;
+    }
+    const uid = getUid();
+
+    // --- DOM refs ---
+    const subscriberContainer = document.getElementById("subscriber-container");
+    const offairCard = document.getElementById("offair-card");
+    const offairText = document.getElementById("offair-text");
+    const muteHint = document.getElementById("mute-hint");
+    const captions = document.getElementById("captions");
+    const captionHeard = document.getElementById("caption-heard");
+    const captionSay = document.getElementById("caption-say");
+    const railHeading = document.getElementById("rail-heading");
+    const talkBtn = document.getElementById("talk-btn");
+    const muteBtn = document.getElementById("mute-btn");
+    const talkStatus = document.getElementById("talk-status");
+    const detailOverlay = document.getElementById("detail-overlay");
+    const detailBackdrop = document.getElementById("detail-backdrop");
+    const detailTitle = document.getElementById("detail-title");
+    const detailMeta = document.getElementById("detail-meta");
+    const detailOverview = document.getElementById("detail-overview");
+    const detailMore = document.getElementById("detail-more");
+    const detailVibe = document.getElementById("detail-vibe");
+    const detailClose = document.getElementById("detail-close");
+    const talkTypeForm = document.getElementById("talk-type-form");
+    const talkTextInput = document.getElementById("talk-text-input");
+    const cardEls = [0, 1, 2].map((i) => document.getElementById(`card-${i}`));
+
+    // ---------- mute (starts muted: a TV needs a gesture for audio, same as a browser does) ----------
+    let wantMuted = true;
+    function applyMute() {
+      for (const video of subscriberContainer.querySelectorAll("video")) video.muted = wantMuted;
+    }
+    function setMuted(value) {
+      wantMuted = value;
+      applyMute();
+      muteBtn.textContent = wantMuted ? "Unmute" : "Mute";
+      muteBtn.setAttribute("aria-pressed", String(wantMuted));
+      muteHint.hidden = !wantMuted;
+    }
+    muteBtn.addEventListener("click", () => setMuted(!wantMuted));
+    let firstGestureDone = false;
+    function unmuteOnFirstGesture() {
+      if (firstGestureDone) return;
+      firstGestureDone = true;
+      setMuted(false);
+      try { OT.unblockAudio(); } catch { /* nothing blocked, or OT not ready yet */ }
+    }
+
+    function duckChannel(volume) {
+      for (const video of subscriberContainer.querySelectorAll("video")) video.volume = volume;
+    }
+
+    // ---------- captions ----------
+    let captionsTimer = null;
+    function showCaptions(heard, say) {
+      captionHeard.textContent = heard || "";
+      captionHeard.hidden = !heard;
+      captionSay.textContent = say || "";
+      captions.hidden = !say;
+      clearTimeout(captionsTimer);
+      if (say) captionsTimer = setTimeout(() => { captions.hidden = true; }, CAPTIONS_MS);
+    }
+
+    function playConciergeAudio(url) {
+      duckChannel(0.3);
+      const audio = new Audio(url);
+      const restore = () => duckChannel(1);
+      audio.addEventListener("ended", restore, { once: true });
+      audio.addEventListener("error", restore, { once: true });
+      audio.play().catch(restore);
+    }
+
+    // ---------- rail: current scene recs, or a "For you" override from the last ask ----------
+    let currentMoodLine = "";
+    let currentPicks = [];
+    let overridePicks = [];
+    let overrideUntil = 0;
+    let overrideActive = false;
+
+    function activePicks() { return overrideActive ? overridePicks : currentPicks; }
+
+    function renderCard(index, item) {
+      const card = cardEls[index];
+      card.hidden = !item;
+      if (!item) return;
+      card.querySelector(".poster").src = item.posterUrl;
+      card.querySelector(".poster").alt = item.title;
+      card.querySelector(".card-title").textContent = item.title;
+      const bits = [];
+      if (item.year) bits.push(String(item.year));
+      if (typeof item.rating === "number") bits.push(`★ ${item.rating.toFixed(1)}`);
+      card.querySelector(".card-meta").textContent = bits.join(" · ");
+      card.onclick = () => openDetail(item);
+    }
+
+    function renderRail() {
+      const picks = activePicks();
+      railHeading.textContent = overrideActive ? "For you" : (currentMoodLine || "You might also like…");
+      for (let i = 0; i < 3; i += 1) renderCard(i, picks[i]);
+      views.rail = computeRailOrder();
+      if (currentView === "rail") clampFocus();
+    }
+
+    async function fetchRecs() {
+      try {
+        const res = await fetch("recs");
+        if (!res.ok) return;
+        const data = await res.json();
+        currentMoodLine = data.moodLine || "";
+        currentPicks = data.picks || [];
+        renderRail();
+      } catch { /* next scene change or poll retries */ }
+    }
+
+    // ---------- deterministic focus model: explicit order per view, not DOM tab order ----------
+    const views = { rail: [], detail: ["detail-more", "detail-vibe", "detail-close"] };
+    let currentView = "rail";
+    let focusIndex = 0;
+
+    function computeRailOrder() {
+      const ids = activePicks().slice(0, 3).map((_, i) => `card-${i}`);
+      return [...ids, "talk-btn", "mute-btn"];
+    }
+    function clampFocus() {
+      const order = views[currentView];
+      focusIndex = Math.max(0, Math.min(order.length - 1, focusIndex));
+      applyFocus();
+    }
+    function applyFocus() {
+      const id = views[currentView][focusIndex];
+      const el = id && document.getElementById(id);
+      if (el) el.focus();
+    }
+    function moveFocus(delta) {
+      const order = views[currentView];
+      focusIndex = Math.max(0, Math.min(order.length - 1, focusIndex + delta));
+      applyFocus();
+    }
+
+    // ---------- detail overlay ----------
+    let detailItem = null;
+    function openDetail(item) {
+      detailItem = item;
+      detailBackdrop.style.backgroundImage = `url(${item.backdropUrl || item.posterUrl})`;
+      detailTitle.textContent = item.title;
+      const bits = [];
+      if (item.year) bits.push(String(item.year));
+      if (typeof item.rating === "number") bits.push(`★ ${item.rating.toFixed(1)}`);
+      detailMeta.textContent = bits.join(" · ");
+      detailOverview.textContent = item.overview;
+      detailOverlay.hidden = false;
+      currentView = "detail";
+      focusIndex = 0;
+      applyFocus();
+    }
+    function closeDetail() {
+      detailOverlay.hidden = true;
+      currentView = "rail";
+      clampFocus();
+    }
+    detailClose.addEventListener("click", closeDetail);
+    detailMore.addEventListener("click", () => {
+      if (!detailItem) return;
+      askConcierge({ text: "More like this", about: { id: detailItem.id, mediaType: detailItem.mediaType } });
+      closeDetail();
+    });
+    detailVibe.addEventListener("click", () => {
+      if (!detailItem) return;
+      askConcierge({
+        text: "Put this vibe on the channel",
+        about: { id: detailItem.id, mediaType: detailItem.mediaType },
+      });
+      closeDetail();
+    });
+
+    // ---------- ask the concierge ----------
+    function setTalkStatus(text) {
+      talkStatus.hidden = !text;
+      talkStatus.textContent = text || "";
+    }
+
+    async function askConcierge({ text, audioBlob, about }) {
+      const form = new FormData();
+      form.append("uid", uid);
+      if (text) form.append("text", text);
+      if (audioBlob) form.append("audio", audioBlob, "ask");
+      if (about) form.append("about", JSON.stringify(about));
+      setTalkStatus("thinking…");
+      let res, data;
+      try {
+        res = await fetch("tv/ask", { method: "POST", body: form });
+        data = await res.json().catch(() => null);
+      } catch {
+        setTalkStatus("");
+        showCaptions("", "Couldn't reach the channel. Try again.");
+        return;
+      }
+      setTalkStatus("");
+      if (!res.ok || !data) {
+        showCaptions((data && data.heard) || "", (data && data.reason) || "Couldn't reach the channel.");
+        return;
+      }
+      showCaptions(data.heard, data.say);
+      if (data.audioUrl) playConciergeAudio(data.audioUrl);
+      if (!data.askedFollowUp && data.picks && data.picks.length > 0) {
+        overridePicks = data.picks;
+        overrideUntil = Date.now() + FOR_YOU_MS;
+        overrideActive = true;
+        renderRail();
+      }
+    }
+
+    // ---------- typed fallback: appears on any non-navigation keystroke ----------
+    function openTypedFallback(firstChar) {
+      talkTypeForm.hidden = false;
+      talkTextInput.value = firstChar || "";
+      talkTextInput.focus();
+    }
+    function closeTypedFallback() {
+      talkTypeForm.hidden = true;
+      talkTextInput.value = "";
+      applyFocus();
+    }
+    talkTypeForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = talkTextInput.value.trim();
+      closeTypedFallback();
+      if (text) askConcierge({ text });
+    });
+
+    // ---------- hold-to-talk: Talk button (Enter/OK) or Space anywhere ----------
+    const MIC_MAX_MS = 10_000;
+    const MIC_MIN_MS = 400;
+    function pickMicMimeType() {
+      if (typeof MediaRecorder === "undefined") return undefined;
+      for (const type of ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"]) {
+        if (MediaRecorder.isTypeSupported(type)) return type;
+      }
+      return undefined;
+    }
+    const micMimeType = pickMicMimeType();
+    const micSupported = window.isSecureContext
+      && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+      && !!micMimeType;
+
+    let micSession = null;
+    let micHolding = false;
+    let micTimerHandle = null;
+
+    function teardownTalk(session) {
+      for (const track of session.stream.getTracks()) track.stop();
+      setMuted(session.wasMuted);
+      talkBtn.classList.remove("recording");
+      talkBtn.setAttribute("aria-pressed", "false");
+      if (micTimerHandle) { clearInterval(micTimerHandle); micTimerHandle = null; }
+    }
+
+    async function beginTalk() {
+      unmuteOnFirstGesture();
+      if (micSession || !micSupported) return;
+      micHolding = true;
+      let stream;
+      try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+      catch { micHolding = false; return; }
+      if (!micHolding) { for (const track of stream.getTracks()) track.stop(); return; }
+      const chunks = [];
+      const recorder = new MediaRecorder(stream, { mimeType: micMimeType });
+      recorder.addEventListener("dataavailable", (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); });
+      const wasMuted = wantMuted;
+      setMuted(true);
+      recorder.start();
+      micSession = { recorder, chunks, stream, startedAt: performance.now(), wasMuted };
+      talkBtn.classList.add("recording");
+      talkBtn.setAttribute("aria-pressed", "true");
+      setTalkStatus("listening… 0.0s");
+      micTimerHandle = setInterval(() => {
+        if (!micSession) return;
+        const elapsed = performance.now() - micSession.startedAt;
+        setTalkStatus(`listening… ${(Math.min(elapsed, MIC_MAX_MS) / 1000).toFixed(1)}s`);
+        if (elapsed >= MIC_MAX_MS) endTalk(true);
+      }, 100);
+    }
+
+    function endTalk(send) {
+      micHolding = false;
+      if (!micSession) return;
+      const session = micSession;
+      micSession = null;
+      const elapsed = performance.now() - session.startedAt;
+      if (!send || elapsed < MIC_MIN_MS) {
+        session.recorder.stop();
+        teardownTalk(session);
+        setTalkStatus("");
+        return;
+      }
+      const stopped = new Promise((resolve) => session.recorder.addEventListener("stop", resolve, { once: true }));
+      session.recorder.stop();
+      teardownTalk(session);
+      stopped.then(() => askConcierge({ audioBlob: new Blob(session.chunks, { type: session.recorder.mimeType }) }));
+    }
+
+    talkBtn.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.repeat) return;
+      event.preventDefault();
+      beginTalk();
+    });
+    talkBtn.addEventListener("keyup", (event) => {
+      if (event.key !== "Enter") return;
+      endTalk(true);
+    });
+    talkBtn.addEventListener("click", () => { if (!micSupported) openTypedFallback(""); });
+
+    // ---------- remote navigation: one global keydown dispatcher, clear priority order ----------
+    function isPrintableKey(event) {
+      return event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey;
+    }
+    function goBack() {
+      if (!talkTypeForm.hidden) { closeTypedFallback(); return; }
+      if (currentView === "detail") { closeDetail(); return; }
+    }
+    function onKeyDown(event) {
+      unmuteOnFirstGesture();
+      if (document.activeElement === talkTextInput) return; // typing: don't intercept anything
+      if (micSession && event.key === "Escape") { event.preventDefault(); endTalk(false); return; }
+      if (event.key === " ") { event.preventDefault(); if (!event.repeat) beginTalk(); return; }
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); moveFocus(1); return; }
+      if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); moveFocus(-1); return; }
+      if (event.key === "Escape" || event.key === "Backspace") { event.preventDefault(); goBack(); return; }
+      if (event.key === "Enter") return; // native button semantics handle activation
+      if (isPrintableKey(event)) {
+        // Moving focus into the input mid-keydown lets the browser's own default character-insertion
+        // retarget there too, double-typing the triggering key — seed the value ourselves and stop it.
+        event.preventDefault();
+        openTypedFallback(event.key);
+      }
+    }
+    function onKeyUp(event) {
+      if (event.key === " " && document.activeElement !== talkTextInput) { event.preventDefault(); endTalk(true); }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keyup", onKeyUp);
+    document.addEventListener("pointerdown", unmuteOnFirstGesture, { once: true });
+
+    // ---------- 60s "For you" expiry ----------
+    setInterval(() => {
+      const active = Date.now() < overrideUntil;
+      if (active !== overrideActive) { overrideActive = active; renderRail(); }
+    }, 1000);
+
+    // ---------- status polling: live/off-air state + scene-change detection ----------
+    let statusLive = false;
+    let hasStream = false;
+    let videoState = "connecting";
+    const VIDEO_TEXT = {
+      connecting: "Connecting to the live channel…",
+      ready: "On air — waiting for the picture…",
+      retrying: "Lost the picture — reconnecting…",
+      blocked: "This network is blocking live video. Try another network or turn off a VPN.",
+      nowebrtc: "This browser has live video switched off.",
+    };
+    function updateOffairCard() {
+      offairCard.hidden = hasStream && statusLive;
+      if (offairCard.hidden) return;
+      if (videoState === "nowebrtc") { offairText.textContent = VIDEO_TEXT.nowebrtc; return; }
+      offairText.textContent = statusLive ? VIDEO_TEXT[videoState] : "OFF AIR — waiting for the channel to wake up";
+    }
+
+    let lastIdeaId = null;
+    async function pollStatus() {
+      try {
+        const res = await fetch(`status?uid=${encodeURIComponent(uid)}`);
+        if (!res.ok) return;
+        const status = await res.json();
+        statusLive = Boolean(status.live);
+        updateOffairCard();
+        const ideaId = status.now ? status.now.ideaId : null;
+        if (ideaId !== lastIdeaId) {
+          lastIdeaId = ideaId;
+          overrideUntil = 0;
+          overrideActive = false;
+          fetchRecs();
+        }
+      } catch { /* next tick retries */ }
+    }
+    setInterval(pollStatus, STATUS_POLL_MS);
+    pollStatus();
+    fetchRecs();
+
+    // ---------- Vonage subscribe-only session, with backoff reconnect (mirrors index.html) ----------
+    let reconnectDelay = 1000;
+    let currentStream;
+    function scheduleReconnect(state = "retrying") {
+      hasStream = false;
+      currentStream = undefined;
+      videoState = state;
+      updateOffairCard();
+      setTimeout(connectViewer, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
+    }
+    function onStreamCreated(session, event) {
+      const previous = currentStream;
+      const entry = { streamId: event.stream.streamId, subscriber: undefined };
+      entry.subscriber = session.subscribe(
+        event.stream,
+        "subscriber-container",
+        {
+          insertMode: "append",
+          width: "100%",
+          height: "100%",
+          fitMode: "cover",
+          subscribeToAudio: true,
+          style: { audioBlockedDisplayMode: "off", buttonDisplayMode: "off", nameDisplayMode: "off" },
+        },
+        (err) => {
+          if (err) {
+            console.error("subscribe failed:", err);
+            if (entry.subscriber) session.unsubscribe(entry.subscriber);
+            if (currentStream === entry) currentStream = previous;
+            hasStream = Boolean(currentStream);
+            videoState = hasStream ? "ready" : "retrying";
+            updateOffairCard();
+            return;
+          }
+          if (previous) session.unsubscribe(previous.subscriber);
+          hasStream = true;
+          videoState = "ready";
+          updateOffairCard();
+          applyMute();
+        },
+      );
+      currentStream = entry;
+      applyMute();
+    }
+    function onStreamDestroyed(event) {
+      if (currentStream?.streamId !== event.stream.streamId) return;
+      currentStream = undefined;
+      hasStream = false;
+      videoState = "ready";
+      updateOffairCard();
+    }
+    async function connectViewer() {
+      if (typeof OT === "undefined") { scheduleReconnect("blocked"); return; }
+      if (typeof RTCPeerConnection === "undefined") {
+        videoState = "nowebrtc";
+        updateOffairCard();
+        return;
+      }
+      let creds;
+      try {
+        const res = await fetch("viewer-token");
+        if (!res.ok) throw new Error(`viewer-token ${res.status}`);
+        creds = await res.json();
+      } catch {
+        scheduleReconnect();
+        return;
+      }
+      const session = OT.initSession(creds.applicationId, creds.sessionId);
+      session.on("streamCreated", (event) => onStreamCreated(session, event));
+      session.on("streamDestroyed", onStreamDestroyed);
+      session.on("sessionDisconnected", () => scheduleReconnect());
+      session.connect(creds.token, (err) => {
+        if (err) { scheduleReconnect(); return; }
+        reconnectDelay = 1000;
+        videoState = "ready";
+        updateOffairCard();
+      });
+    }
+    connectViewer();
+
+    // ---------- initial focus ----------
+    renderRail();
+    applyFocus();
+  </script>
+</body>
+</html>
