@@ -85,6 +85,8 @@ export interface SpendSnapshot {
   scenes: SceneSpend[];
   notAired: { usd: number };
   idle: { usd: number };
+  /** Nebius cost of ticker photo/caption moderation — never tied to a scene (see recordTicker) */
+  ticker: { usd: number };
 }
 
 function nebiusCost(usage: TokenUsage): number {
@@ -123,6 +125,7 @@ export class SpendLedger {
   private vonage = { usd: 0, participantMinutes: 0 };
   private notAiredUsd = 0;
   private idleUsd = 0;
+  private tickerUsd = 0;
   private scenes: SceneSpend[] = [];
   private pending = new Map<number, PendingIdea>();
 
@@ -157,6 +160,16 @@ export class SpendLedger {
     this.slng.calls += 1;
     this.notAiredUsd += usd;
     this.chargePending(ideaId, name, text, "slng", usd);
+  }
+
+  /**
+   * Charge one ticker Nebius call (image moderation or caption/name moderation). Ticker
+   * submissions are never tied to a queued idea, so this scene-less line — not `notAired`, which
+   * is idea-specific — is where all of it lands, whatever the verdict.
+   */
+  recordTicker(usage: TokenUsage): void {
+    const usd = this.chargeNebius(usage);
+    this.tickerUsd += usd;
   }
 
   /** Charge fal Director open-session seconds to the scene on air, or "idle" when none is. */
@@ -227,6 +240,7 @@ export class SpendLedger {
       scenes: this.scenes.map((scene) => ({ ...scene, byProvider: { ...scene.byProvider } })),
       notAired: { usd: this.notAiredUsd },
       idle: { usd: this.idleUsd },
+      ticker: { usd: this.tickerUsd },
     };
   }
 

@@ -181,6 +181,45 @@ describe("last-8 ordering", () => {
   });
 });
 
+describe("ticker bucket", () => {
+  it("charges a ticker moderation call to Nebius and the ticker scene-less line", () => {
+    const ledger = new SpendLedger();
+    ledger.recordTicker({ inputTokens: 1000, outputTokens: 500 });
+    const snap = ledger.snapshot();
+    expect(snap.ticker.usd).toBeGreaterThan(0);
+    expect(snap.byProvider.nebius.usd).toBeCloseTo(snap.ticker.usd, 9);
+    expect(snap.totalUsd).toBeCloseTo(snap.byProvider.nebius.usd, 9);
+  });
+
+  it("never moves ticker cost into a scene, even once one airs", () => {
+    const ledger = new SpendLedger();
+    ledger.recordTicker({ inputTokens: 100, outputTokens: 50 });
+    ledger.recordModeration(1, "Ana", "a cat", { inputTokens: 10, outputTokens: 10 });
+    ledger.markAired(1, "Ana", "a cat");
+    const snap = ledger.snapshot();
+    expect(snap.ticker.usd).toBeGreaterThan(0);
+    expect(snap.scenes[0]?.byProvider.nebius).toBeCloseTo(
+      snap.byProvider.nebius.usd - snap.ticker.usd,
+      9,
+    );
+  });
+
+  it("keeps scene-less lines plus scenes summing to totalUsd", () => {
+    const ledger = new SpendLedger();
+    ledger.recordModeration(1, "Ana", "a cat", { inputTokens: 100, outputTokens: 50 });
+    ledger.markAired(1, "Ana", "a cat");
+    ledger.recordFal(1, 2);
+    ledger.recordTicker({ inputTokens: 200, outputTokens: 100 });
+    ledger.recordVonage("idle", 1);
+    const snap = ledger.snapshot();
+    const scenesUsd = snap.scenes.reduce((sum, scene) => sum + scene.usd, 0);
+    expect(scenesUsd + snap.notAired.usd + snap.idle.usd + snap.ticker.usd).toBeCloseTo(
+      snap.totalUsd,
+      9,
+    );
+  });
+});
+
 describe("zero and missing usage", () => {
   it("records zero-cost usage without error", () => {
     const ledger = new SpendLedger();
