@@ -24,7 +24,10 @@
 <meta name="twitter:image" content="__PUBLIC_URL__/assets/og.jpg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bungee&display=swap" rel="stylesheet">
+<!-- Loaded non-blockingly: a render-blocking third-party stylesheet leaves the whole page blank
+     on any network that black-holes fonts.googleapis.com instead of refusing fast. -->
+<link href="https://fonts.googleapis.com/css2?family=Bungee&display=swap" rel="stylesheet"
+  media="print" onload="this.media='all'">
 <style>
   :root {
     --bg: #050505;
@@ -439,7 +442,7 @@
   <div id="video-wrap">
     <div id="subscriber-container"></div>
     <div id="offair-card" class="pill">
-      <p>OFF AIR &mdash; send an idea to wake the channel</p>
+      <p id="offair-text">OFF AIR &mdash; send an idea to wake the channel</p>
     </div>
   </div>
 
@@ -598,6 +601,7 @@
     const videoWrap = document.getElementById("video-wrap");
     const subscriberContainer = document.getElementById("subscriber-container");
     const offairCard = document.getElementById("offair-card");
+    const offairText = document.getElementById("offair-text");
     const heartLayer = document.getElementById("heart-layer");
     const livePill = document.getElementById("live-pill");
     const liveLabel = document.getElementById("live-label");
@@ -957,8 +961,23 @@
     // ---------- status rendering ----------
     let statusLive = false;
     let hasStream = false;
+    // Why there is no picture. Without this a viewer whose network or browser can't reach Vonage
+    // sat on a black screen under a LIVE pill, which reads as "the site is broken".
+    // "ready" = connected to the session, just no stream on it yet.
+    let videoState = "connecting";
+    const OFFAIR_TEXT = "OFF AIR — send an idea to wake the channel";
+    const VIDEO_TEXT = {
+      connecting: "Connecting to the live video…",
+      ready: "On air — waiting for the picture…",
+      retrying: "Lost the live video — reconnecting…",
+      blocked: "This network is blocking the live video. It needs video.standard.vonage.com " +
+        "and WebRTC — try another network, or turn off a VPN or content blocker.",
+    };
     function updateVideoVisibility() {
       offairCard.hidden = hasStream && statusLive;
+      // Off air is off air whatever the video layer is doing; the rest only matters while live.
+      if (offairCard.hidden) return;
+      offairText.textContent = statusLive ? VIDEO_TEXT[videoState] : OFFAIR_TEXT;
     }
     function renderLivePill(live) {
       livePill.classList.toggle("is-live", live);
@@ -1027,8 +1046,10 @@
 
     // ---------- Vonage subscribe-only session, with backoff reconnect ----------
     let reconnectDelay = 1000;
-    function scheduleReconnect() {
+    function scheduleReconnect(state = "retrying") {
       hasStream = false;
+      currentStream = undefined;
+      videoState = state;
       updateVideoVisibility();
       setTimeout(connectViewer, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
@@ -1039,7 +1060,10 @@
     let currentStream;
     function onStreamCreated(session, event) {
       const previous = currentStream;
-      const subscriber = session.subscribe(
+      // Mutated, not reassigned, so the callback can reach the subscriber even if OT calls back
+      // synchronously (a `const subscriber = session.subscribe(...)` would still be in its TDZ).
+      const entry = { streamId: event.stream.streamId, subscriber: undefined };
+      entry.subscriber = session.subscribe(
         event.stream,
         "subscriber-container",
         {
@@ -1051,23 +1075,42 @@
           style: { audioBlockedDisplayMode: "off", buttonDisplayMode: "off", nameDisplayMode: "off" },
         },
         (err) => {
-          if (err) return console.error("subscribe failed:", err);
+          if (err) {
+            // A failed subscribe still leaves its (empty) container in the DOM. Marking the stream
+            // live here anyway is what showed a black screen under a LIVE pill with no retry.
+            console.error("subscribe failed:", err);
+            if (entry.subscriber) session.unsubscribe(entry.subscriber);
+            if (currentStream === entry) currentStream = previous;
+            hasStream = Boolean(currentStream);
+            videoState = hasStream ? "ready" : "retrying";
+            updateVideoVisibility();
+            return;
+          }
           if (previous) session.unsubscribe(previous.subscriber);
+          hasStream = true;
+          videoState = "ready";
+          updateVideoVisibility();
           applyMute();
         },
       );
-      currentStream = { streamId: event.stream.streamId, subscriber };
-      hasStream = true;
-      updateVideoVisibility();
+      currentStream = entry;
       applyMute();
     }
     function onStreamDestroyed(event) {
       if (currentStream?.streamId !== event.stream.streamId) return;
       currentStream = undefined;
       hasStream = false;
+      videoState = "ready";
       updateVideoVisibility();
     }
     async function connectViewer() {
+      // OT comes from a third-party <script>. A content blocker, corporate DNS or an offline CDN
+      // leaves it undefined, and the ReferenceError used to kill this function with no retry and
+      // nothing on screen.
+      if (typeof OT === "undefined") {
+        scheduleReconnect("blocked");
+        return;
+      }
       let creds;
       try {
         const res = await fetch("viewer-token");
@@ -1080,10 +1123,16 @@
       const session = OT.initSession(creds.applicationId, creds.sessionId);
       session.on("streamCreated", (event) => onStreamCreated(session, event));
       session.on("streamDestroyed", onStreamDestroyed);
-      session.on("sessionDisconnected", scheduleReconnect);
+      // Wrapped: the handler is called with the disconnect event, which would land in `state`.
+      session.on("sessionDisconnected", () => scheduleReconnect());
       session.connect(creds.token, (err) => {
-        if (err) scheduleReconnect();
-        else reconnectDelay = 1000;
+        if (err) {
+          scheduleReconnect();
+          return;
+        }
+        reconnectDelay = 1000;
+        videoState = "ready";
+        updateVideoVisibility();
       });
     }
     connectViewer();
