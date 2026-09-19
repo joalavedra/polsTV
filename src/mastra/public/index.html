@@ -1406,6 +1406,7 @@
     const uid = getUid();
 
     // --- DOM refs ---
+    const backdropVideo = document.getElementById("backdrop-video");
     const videoWrap = document.getElementById("video-wrap");
     const subscriberContainer = document.getElementById("subscriber-container");
     const offairCard = document.getElementById("offair-card");
@@ -1413,23 +1414,27 @@
     const heartLayer = document.getElementById("heart-layer");
     const livePill = document.getElementById("live-pill");
     const liveLabel = document.getElementById("live-label");
-    const captionBar = document.getElementById("caption-bar");
-    const captionName = document.getElementById("caption-name");
-    const captionKarma = document.getElementById("caption-karma");
-    const captionKarmaBadge = document.getElementById("caption-karma-badge");
-    const captionText = document.getElementById("caption-text");
+    const liveViewerCount = document.getElementById("live-viewer-count");
+    const stageCaption = document.getElementById("stage-caption");
+    const stageSteeringLine = document.getElementById("stage-steering-line");
+    const stageCaptionName = document.getElementById("stage-caption-name");
+    const stageCaptionKarmaN = document.getElementById("stage-caption-karma-n");
+    const stageCaptionKarma = document.getElementById("stage-caption-karma");
+    const stageCaptionText = document.getElementById("stage-caption-text");
+    const stageCaptionVoice = document.getElementById("stage-caption-voice");
+    const stageCaptionVoiceText = document.getElementById("stage-caption-voice-text");
     const captionAmendsChip = document.getElementById("caption-amends-chip"); // amend
     const viewerCount = document.getElementById("viewer-count");
     const muteBtn = document.getElementById("mute-btn");
     const interfaceBtn = document.getElementById("interface-btn");
+    const restoreInterfaceBtn = document.getElementById("restore-interface-btn");
     const spendPill = document.getElementById("spend-pill");
+    const spendAmount = document.getElementById("spend-amount");
     const spendPopover = document.getElementById("spend-popover");
     const spendClose = document.getElementById("spend-close");
     const spendProviders = document.getElementById("spend-providers");
     const spendScenes = document.getElementById("spend-scenes");
     const steeringBody = document.getElementById("steering-body");
-    const steeringStrip = document.getElementById("steering-strip");
-    const steeringStripText = document.getElementById("steering-strip-text");
     const railQueue = document.getElementById("rail-queue");
     const paneQueue = document.getElementById("pane-queue");
     const paneChat = document.getElementById("pane-chat");
@@ -1438,9 +1443,24 @@
     const likeHeart = document.getElementById("like-heart");
     const likeCount = document.getElementById("like-count");
     const likeOwnLabel = document.getElementById("like-own-label");
+    const railAvatarItem = document.getElementById("rail-avatar-item");
+    const railAvatar = document.getElementById("rail-avatar");
+    const railAvatarKarma = document.getElementById("rail-avatar-karma");
+    const chatCountBtn = document.getElementById("chat-count-btn");
+    const chatCountLabel = document.getElementById("chat-count-label");
+    const shareBtn = document.getElementById("share-btn");
+    const sharePopover = document.getElementById("share-popover");
+    const shareCopy = document.getElementById("share-copy");
+    const moreBtn = document.getElementById("more-btn");
+    const moreSheet = document.getElementById("more-sheet");
+    const moreSheetBackdrop = document.getElementById("more-sheet-backdrop");
+    const moreClose = document.getElementById("more-close");
+    const moreInterfaceBtn = document.getElementById("more-interface-btn");
+    const moreSpendBtn = document.getElementById("more-spend-btn");
+    const moreSpendTotal = document.getElementById("more-spend-total");
     const youChip = document.getElementById("you-chip");
     const youKarma = document.getElementById("you-karma");
-    const drawerBtn = document.getElementById("drawer-btn");
+    const sheetBackdrop = document.getElementById("sheet-backdrop");
     const drawerClose = document.getElementById("drawer-close");
     const sayForm = document.getElementById("say-form");
     const sayInput = document.getElementById("say-input");
@@ -1525,36 +1545,114 @@
     }
 
     // ---------- interface (pure-TV) toggle ----------
-    interfaceBtn.addEventListener("click", () => {
-      const hidden = document.body.classList.toggle("chrome-hidden");
+    // Two entry points (the top-bar button on desktop, "Pure TV" in mobile's more-sheet) and two
+    // ways back out (the top-bar button again, or #restore-interface-btn — bottom-right, fades in
+    // on pointer/touch activity, and on mobile a tap on the picture itself also restores).
+    function setChromeHidden(hidden) {
+      document.body.classList.toggle("chrome-hidden", hidden);
       interfaceBtn.setAttribute("aria-pressed", String(hidden));
+      moreInterfaceBtn.setAttribute("aria-pressed", String(hidden));
       if (hidden) closeSpendPopover({ returnFocus: false });
+    }
+    interfaceBtn.addEventListener("click", () => setChromeHidden(!document.body.classList.contains("chrome-hidden")));
+    moreInterfaceBtn.addEventListener("click", () => {
+      setChromeHidden(!document.body.classList.contains("chrome-hidden"));
+      closeMoreSheet();
+    });
+    restoreInterfaceBtn.addEventListener("click", () => setChromeHidden(false));
+    let restoreFadeTimer = null;
+    function pokeRestoreHint() {
+      if (!document.body.classList.contains("chrome-hidden")) return;
+      document.body.classList.add("show-restore");
+      clearTimeout(restoreFadeTimer);
+      restoreFadeTimer = setTimeout(() => document.body.classList.remove("show-restore"), 2200);
+    }
+    document.addEventListener("pointermove", pokeRestoreHint);
+    document.addEventListener("pointerdown", pokeRestoreHint);
+
+    // ---------- sheet (chat/queue/rank): a bottom sheet on mobile/landscape, always open
+    // (statically positioned) on desktop, where body.sheet-open has no visual effect. ----------
+    function openSheet() {
+      document.body.classList.add("sheet-open");
+      sheetBackdrop.hidden = false;
+    }
+    function closeSheet() {
+      document.body.classList.remove("sheet-open");
+      sheetBackdrop.hidden = true;
+    }
+    function openChatTab() {
+      selectTab(document.getElementById("tab-chat"));
+      openSheet();
+    }
+    chatCountBtn.addEventListener("click", openChatTab);
+    drawerClose.addEventListener("click", closeSheet);
+    sheetBackdrop.addEventListener("click", closeSheet);
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && document.body.classList.contains("sheet-open")) closeSheet();
+    });
+    // Rotating out of the landscape/portrait sheet treatments shouldn't leave a stale open sheet.
+    matchMedia("(max-width: 820px)").addEventListener("change", closeSheet);
+    matchMedia("(max-height: 500px) and (orientation: landscape)").addEventListener("change", closeSheet);
+
+    // ---------- mobile overflow "more" sheet: spend, pitch, pure-TV, Telegram ----------
+    function openMoreSheet() {
+      moreSheet.hidden = false;
+      moreBtn.setAttribute("aria-expanded", "true");
+    }
+    function closeMoreSheet() {
+      moreSheet.hidden = true;
+      moreBtn.setAttribute("aria-expanded", "false");
+    }
+    moreBtn.addEventListener("click", openMoreSheet);
+    moreSheetBackdrop.addEventListener("click", closeMoreSheet);
+    moreClose.addEventListener("click", closeMoreSheet);
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !moreSheet.hidden) closeMoreSheet();
+    });
+    moreSpendBtn.addEventListener("click", () => {
+      closeMoreSheet();
+      openSpendPopover();
     });
 
-    // ---------- landscape-phone drawer ----------
-    // Portrait/desktop never show #drawer-btn (display:none there), so this only ever
-    // does anything in the landscape-phone media query.
-    function closeDrawer() {
-      document.body.classList.remove("drawer-open");
-      drawerBtn.setAttribute("aria-expanded", "false");
+    // ---------- share: copy link, or open the Telegram bot ----------
+    let shareOpen = false;
+    function openSharePopover() {
+      shareOpen = true;
+      sharePopover.hidden = false;
+      shareBtn.setAttribute("aria-expanded", "true");
     }
-    drawerBtn.addEventListener("click", () => {
-      const open = document.body.classList.toggle("drawer-open");
-      drawerBtn.setAttribute("aria-expanded", String(open));
-    });
-    drawerClose.addEventListener("click", () => {
-      closeDrawer();
-      drawerBtn.focus();
+    function closeSharePopover() {
+      shareOpen = false;
+      sharePopover.hidden = true;
+      shareBtn.setAttribute("aria-expanded", "false");
+    }
+    shareBtn.addEventListener("click", () => (shareOpen ? closeSharePopover() : openSharePopover()));
+    shareCopy.addEventListener("click", async () => {
+      const url = location.href;
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch {
+        // Clipboard API unavailable (insecure context, permission denied) — select-and-copy
+        // fallback via a temporary offscreen input.
+        const temp = document.createElement("input");
+        temp.value = url;
+        temp.style.position = "fixed";
+        temp.style.left = "-9999px";
+        document.body.appendChild(temp);
+        temp.select();
+        try { document.execCommand("copy"); } catch { /* nothing more we can do */ }
+        temp.remove();
+      }
+      showToast("Link copied");
+      closeSharePopover();
     });
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && document.body.classList.contains("drawer-open")) {
-        closeDrawer();
-        drawerBtn.focus();
-      }
+      if (event.key === "Escape" && shareOpen) closeSharePopover();
     });
-    // Rotating back to portrait mid-drawer shouldn't leave it open for the next landscape flip.
-    matchMedia("(max-height: 500px) and (orientation: landscape)").addEventListener("change", (event) => {
-      if (!event.matches) closeDrawer();
+    document.addEventListener("click", (event) => {
+      if (!shareOpen) return;
+      if (sharePopover.contains(event.target) || shareBtn.contains(event.target)) return;
+      closeSharePopover();
     });
 
     // ---------- mute toggle ----------
@@ -1601,7 +1699,8 @@
     }
     function renderSpend(data) {
       RATES_CACHE = data.rates;
-      spendPill.textContent = formatUsd(data.totalUsd);
+      spendAmount.textContent = formatUsd(data.totalUsd);
+      moreSpendTotal.textContent = formatUsd(data.totalUsd);
       spendProviders.textContent = "";
       for (const name of ["fal", "nebius", "slng", "vonage"]) {
         renderSpendRow(spendProviders, name, data.byProvider[name].usd, PROVIDER_DETAIL[name](data.byProvider[name]));
@@ -1714,12 +1813,45 @@
       return data.ok;
     }
     videoWrap.addEventListener("click", async (event) => {
+      // Pure TV: tapping the picture itself is the mobile way back in (point-move fades in
+      // #restore-interface-btn on desktop). Still likes on the same tap either way.
+      if (document.body.classList.contains("chrome-hidden")) setChromeHidden(false);
       if (await likeCurrentScene()) spawnHeart(event.clientX, event.clientY);
     });
     likeBtn.addEventListener("click", async (event) => {
       if (!lastNow || lastNow.uid === uid || likedIdeaId === lastNow.ideaId) return;
       if (await likeCurrentScene()) spawnHeart(event.clientX, event.clientY);
     });
+
+    // ---------- keyboard shortcuts: L likes, M mutes, I toggles interface, / focuses input.
+    // Only when focus isn't already in a text field, so typing an idea never triggers these. ----------
+    function inTextField() {
+      const el = document.activeElement;
+      if (!el) return false;
+      return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
+    }
+    document.addEventListener("keydown", (event) => {
+      if (inTextField() || event.metaKey || event.ctrlKey || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "l") {
+        if (!lastNow || lastNow.uid === uid || likedIdeaId === lastNow.ideaId) return;
+        const rect = likeBtn.getBoundingClientRect();
+        likeCurrentScene().then((ok) => {
+          if (ok) spawnHeart(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        });
+      } else if (key === "m") {
+        muteBtn.click();
+      } else if (key === "i") {
+        setChromeHidden(!document.body.classList.contains("chrome-hidden"));
+      } else if (key === "/") {
+        event.preventDefault();
+        sayInput.focus();
+      }
+    });
+    likeBtn.title = "Like this scene (L)";
+    muteBtn.title = "Mute (M)";
+    interfaceBtn.title = "Toggle pure-TV interface (I)";
+    sayInput.title = "Focus the input (/)";
 
     // amend:start — "Yes, and": a two-state toggle for whether Say sends a new scene or a change
     // to the one on air. Self-contained; postIdea (below) reads sayKind when it sends.
@@ -1807,11 +1939,14 @@
     });
 
     // pitch:start — karma-gated sponsored voice-over. Self-contained; renderStatus calls
-    // renderPitchBadge, everything else lives here.
+    // renderPitchBadge, everything else lives here. Two entry points share this state: the round
+    // rail button (desktop, always visible) and the "Pitch" row in mobile's more-sheet.
     const PITCH_MIN_KARMA = 3;
     const ME_POLL_MS = 5000;
     const pitchBtn = document.getElementById("pitch-btn");
-    const pitchBadge = document.getElementById("pitch-badge");
+    const pitchBtnLabel = document.getElementById("pitch-btn-label");
+    const morePitchBtn = document.getElementById("more-pitch-btn");
+    const morePitchState = document.getElementById("more-pitch-state");
     const pitchModal = document.getElementById("pitch-modal");
     const pitchForm = document.getElementById("pitch-form");
     const pitchInput = document.getElementById("pitch-input");
@@ -1822,16 +1957,17 @@
 
     function renderPitchButton() {
       const locked = myKarma < PITCH_MIN_KARMA;
-      pitchBtn.textContent = locked ? `${PITCH_MIN_KARMA}★ to unlock` : "pitch";
+      pitchBtnLabel.textContent = locked ? `${PITCH_MIN_KARMA}★` : "pitch";
       pitchBtn.classList.toggle("is-locked", locked);
       pitchBtn.title = locked
         ? `${PITCH_MIN_KARMA} karma lets you instruct the channel's voice. You have ${myKarma}.`
         : "Have the channel's voice sell something of yours";
+      morePitchState.textContent = locked ? `${PITCH_MIN_KARMA}★ to unlock` : "ready";
     }
 
     function renderPitchBadge(pitch) {
-      pitchBadge.hidden = !pitch;
-      if (pitch) pitchBadge.textContent = `A word from ${pitch.name}`;
+      stageCaptionVoice.hidden = !pitch;
+      if (pitch) stageCaptionVoiceText.textContent = `A word from ${pitch.name}`;
     }
 
     async function refreshMe() {
@@ -1883,6 +2019,10 @@
     }
 
     pitchBtn.addEventListener("click", openPitchModal);
+    morePitchBtn.addEventListener("click", () => {
+      closeMoreSheet();
+      openPitchModal();
+    });
     pitchCancel.addEventListener("click", () => { pitchModal.hidden = true; });
     pitchForm.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -2101,9 +2241,16 @@
     function renderQueueItem(item, el) {
       if (!el) {
         el = h("div", "queue-item");
-        // amend: kind-tag is empty/hidden for a "new" idea, "change" for an amend.
-        el.append(h("span", "kind-tag"), h("span", "q-name"), h("span", "q-karma"), h("p", "q-text"));
+        // Desktop-only avatar tint (CSS hides it in #pane-queue, the mobile sheet's QUEUE tab);
+        // amend: kind-tag is empty/hidden for a "new" idea, "change" for an amend. Unknown
+        // fields on `item` (a future kind, say) are simply never read here — safe by default.
+        const body = h("div");
+        body.append(h("span", "kind-tag"), h("span", "q-name"), h("span", "q-karma"), h("p", "q-text"));
+        el.append(h("span", "q-avatar"), body);
       }
+      const avatar = el.querySelector(".q-avatar");
+      avatar.textContent = (item.name || "?").charAt(0).toUpperCase();
+      avatar.style.background = `hsl(${hashHue(item.name)}, 85%, 85%)`;
       const tag = el.querySelector(".kind-tag");
       tag.textContent = "change";
       tag.hidden = item.kind !== "amend";
@@ -2187,16 +2334,18 @@
       if (videoState === "nowebrtc") offairText.textContent = VIDEO_TEXT.nowebrtc;
       else offairText.textContent = statusLive ? VIDEO_TEXT[videoState] : OFFAIR_TEXT;
     }
-    function renderLivePill(live) {
+    function renderLivePill(live, viewers) {
       livePill.classList.toggle("is-live", live);
       liveLabel.textContent = live ? "LIVE" : "OFF AIR";
+      liveViewerCount.textContent = `${viewers} watching`;
     }
     function renderCaption(now) {
-      captionBar.hidden = !now;
+      stageCaption.hidden = !now;
       if (!now) return;
-      captionName.textContent = now.name;
-      captionKarma.textContent = String(now.karma);
-      captionText.textContent = now.text;
+      stageCaptionName.textContent = now.name;
+      stageCaptionKarmaN.textContent = String(now.karma);
+      stageCaptionText.textContent = now.text;
+      stageCaptionText.title = now.text;
       // amend:start
       const amendCount = now.amends ? now.amends.length : 0;
       captionAmendsChip.hidden = amendCount === 0;
@@ -2207,7 +2356,7 @@
     }
     function popCaptionKarma() {
       const pop = h("span", "karma-pop", "+1 ★");
-      captionKarmaBadge.appendChild(pop);
+      stageCaptionKarma.appendChild(pop);
       pop.addEventListener("animationend", () => pop.remove());
     }
     function spawnLikeHearts(count) {
@@ -2226,9 +2375,9 @@
     }
     function renderSteering(steering) {
       steeringBody.textContent = "";
-      steeringStrip.hidden = !steering;
       if (!steering) {
         steeringBody.appendChild(h("p", "steer-hint", "Nothing steering yet."));
+        stageSteeringLine.hidden = true;
         return;
       }
       // amend: an amend targets the scene already on air, so it reads as "change:", not a new name.
@@ -2239,17 +2388,31 @@
       steeringBody.appendChild(nameLine);
       steeringBody.appendChild(h("p", "q-text", steering.text));
       steeringBody.appendChild(h("p", "steer-hint", "~20 s to screen"));
-      const label = isAmend ? "Change" : "Steering now";
-      steeringStripText.textContent = `${label}: ${steering.name} — ${steering.text} (~20 s to screen)`;
+      const label = isAmend ? "up next · change" : "up next";
+      stageSteeringLine.hidden = false;
+      stageSteeringLine.textContent = `${label} · ${steering.name}: ${steering.text}`;
+    }
+    // Prompter avatar: the same name-hash tint chat bubbles use, hidden with the like button
+    // whenever nothing is on air.
+    function renderRailAvatar(now) {
+      railAvatarItem.hidden = !now;
+      if (!now) return;
+      railAvatar.textContent = (now.name || "?").charAt(0).toUpperCase();
+      railAvatar.style.background = `hsl(${hashHue(now.name)}, 85%, 85%)`;
+      railAvatarKarma.textContent = `★ ${now.karma}`;
+    }
+    function renderChatCount(chat) {
+      chatCountLabel.textContent = String(chat.length);
     }
     function renderStatus(status) {
       const previousNow = lastNow;
       lastNow = status.now;
       statusLive = Boolean(status.live);
       updateVideoVisibility();
-      renderLivePill(statusLive);
+      renderLivePill(statusLive, status.viewers);
       diffLikesAndKarma(previousNow, status.now);
       renderCaption(status.now);
+      renderRailAvatar(status.now);
       renderAmendToggle(status.now); // amend
       renderLikeButton();
       renderPitchBadge(status.pitch); // pitch
@@ -2258,6 +2421,7 @@
       syncList(railQueue, status.queue, (q) => q.id, renderQueueItem);
       syncList(paneQueue, status.queue, (q) => q.id, renderQueueItem);
       syncList(paneChat, status.chat, (c) => c.id, renderChatItem);
+      renderChatCount(status.chat);
       pinChatScroll();
       syncList(paneRank, status.rank, (r) => r.name, renderRankItem);
       renderYouChip(status.rank);
@@ -2296,6 +2460,29 @@
       startSpendPolling();
     }
 
+    // ---------- ambient backdrop: same MediaStream as the subscriber's <video>, heavily
+    // blurred via CSS. Never a second Vonage subscription — just reads the existing element. ----------
+    const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+    function attachBackdrop() {
+      if (reduceMotion.matches) return; // static #backdrop-fallback gradient stays instead
+      try {
+        const video = subscriberContainer.querySelector("video");
+        const stream = video && video.srcObject;
+        if (!stream) return;
+        backdropVideo.srcObject = stream;
+        const playResult = backdropVideo.play();
+        if (playResult && typeof playResult.catch === "function") playResult.catch(() => {});
+        backdropVideo.hidden = false;
+      } catch {
+        // Can't read the subscriber's stream (unusual browser/DOM shape) — skip the backdrop
+        // entirely; the static fallback underneath already covers this.
+      }
+    }
+    function clearBackdrop() {
+      backdropVideo.hidden = true;
+      backdropVideo.srcObject = null;
+    }
+
     // ---------- Vonage subscribe-only session, with backoff reconnect ----------
     let reconnectDelay = 1000;
     function scheduleReconnect(state = "retrying") {
@@ -2303,6 +2490,7 @@
       currentStream = undefined;
       videoState = state;
       updateVideoVisibility();
+      clearBackdrop();
       setTimeout(connectViewer, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
     }
@@ -2322,7 +2510,11 @@
           insertMode: "append",
           width: "100%",
           height: "100%",
-          fitMode: "cover",
+          // "contain": the whole picture, never cropped — the desktop stage and the mobile
+          // full-width strip both rely on this rather than fighting Vonage's own inline style
+          // with CSS (the landscape-phone query still forces object-fit:cover for a full-bleed
+          // fill there, which wins there via !important).
+          fitMode: "contain",
           subscribeToAudio: true,
           style: { audioBlockedDisplayMode: "off", buttonDisplayMode: "off", nameDisplayMode: "off" },
         },
@@ -2343,6 +2535,7 @@
           videoState = "ready";
           updateVideoVisibility();
           applyMute();
+          attachBackdrop();
         },
       );
       currentStream = entry;
@@ -2354,6 +2547,7 @@
       hasStream = false;
       videoState = "ready";
       updateVideoVisibility();
+      clearBackdrop();
     }
     async function connectViewer() {
       // OT comes from a third-party <script>. A content blocker, corporate DNS or an offline CDN
