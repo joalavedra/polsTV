@@ -42,6 +42,9 @@
     --side-col-w: 380px;
     --topbar-h: 64px;
     --rail-btn: 48px;
+    /* Height of the pinned input bar. Kept as one number so the sheet, rail and caption block
+       all clear it consistently instead of guessing at three different pixel counts. */
+    --inputbar-h: 64px;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
@@ -56,14 +59,31 @@
   button { touch-action: manipulation; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  #video-wrap { position: fixed; inset: 0; background: #000; }
+  #backdrop-fallback {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    background: radial-gradient(ellipse at 50% 40%, #1a1a1e 0%, #050505 70%);
+  }
+  #backdrop-video {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: blur(60px) brightness(.45);
+    transform: scale(1.2);
+  }
+
+  #video-wrap { position: fixed; inset: 0; background: #000; z-index: 1; }
   #subscriber-container { position: relative; width: 100%; height: 100%; overflow: hidden; }
   /* Streams are appended and briefly overlap during a broadcaster restart: stack, don't flow. */
   #subscriber-container > * { position: absolute !important; inset: 0; }
   #subscriber-container video, #subscriber-container object {
     width: 100% !important;
     height: 100% !important;
-    object-fit: cover;
+    object-fit: contain;
   }
 
   .pill {
@@ -79,29 +99,13 @@
   .pill-btn { cursor: pointer; border: 1px solid var(--panel-border); }
   .pill-btn:hover { background: rgba(255, 255, 255, .12); }
 
-  /* Visible like control: tap-the-video liking still works, but this is the discoverable one.
-     Bottom-centre of the video area on desktop, clear of the rail (left) and panel (right). */
-  #like-btn {
-    position: fixed;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 10;
-    display: flex;
-    align-items: center;
-    gap: .4rem;
-    font-weight: 700;
-  }
-  #like-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
-  #like-btn:disabled { cursor: default; opacity: .85; }
-  #like-count { font-variant-numeric: tabular-nums; min-width: 1.4em; display: inline-block; text-align: left; }
-
   #offair-card {
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
     width: min(90vw, 420px);
+    z-index: 3;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -112,17 +116,159 @@
   .splash-logo { display: block; width: min(80vw, 420px); height: auto; border-radius: 14px; margin: 0 auto .75rem; }
   #offair-card p { margin: 0; font-size: 1rem; color: var(--text-dim); }
 
-  .top-center {
+  /* ---------- Action rail: shared TikTok-style vertical column of round buttons, present at
+     every breakpoint. Only its `right`/`bottom` anchor changes per breakpoint below. ---------- */
+  #action-rail {
     position: fixed;
-    top: calc(env(safe-area-inset-top, 0px) + 12px);
-    left: 50%;
-    transform: translateX(-50%);
+    z-index: 10;
     display: flex;
     flex-direction: column;
     align-items: center;
+    gap: 18px;
+  }
+  .rail-item {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: .2rem;
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
+  }
+  .rail-icon {
+    width: var(--rail-btn);
+    height: var(--rail-btn);
+    border-radius: 50%;
+    background: rgba(20, 20, 24, .5);
+    border: 1px solid rgba(255, 255, 255, .25);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.3rem;
+    position: relative;
+    filter: drop-shadow(0 1px 4px rgba(0, 0, 0, .55));
+  }
+  .rail-label {
+    font-size: .68rem;
+    font-weight: 700;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, .8);
+    font-variant-numeric: tabular-nums;
+  }
+  #like-btn[aria-pressed="true"] .rail-icon { background: var(--accent); border-color: var(--accent); }
+  #like-btn:disabled { cursor: default; }
+  .rail-avatar {
+    width: var(--rail-btn);
+    height: var(--rail-btn);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    color: #14141c;
+    border: 2px solid rgba(255, 255, 255, .65);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .55);
+  }
+  #pitch-btn.is-locked .rail-icon { opacity: .55; }
+  #pitch-btn.is-locked .rail-icon::after {
+    content: "3★";
+    position: absolute;
+    bottom: -4px;
+    right: -8px;
+    background: var(--accent);
+    color: #fff;
+    font-size: .58rem;
+    font-weight: 700;
+    padding: .05rem .32rem;
+    border-radius: 999px;
+    border: 1px solid var(--bg);
+  }
+  #spend-amount { font-size: .62rem; font-weight: 700; padding: 0 .15rem; text-align: center; }
+
+  /* Pure-TV restore control: invisible until chrome-hidden, then fades in on pointer/touch
+     activity and fades back out. Never marked .chrome — it is the only way back. */
+  #restore-interface-btn {
+    display: none;
+    position: fixed;
+    right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    z-index: 25;
+    opacity: 0;
+    transition: opacity .25s ease;
+    pointer-events: none;
+  }
+  body.chrome-hidden #restore-interface-btn { display: inline-flex; }
+  body.chrome-hidden.show-restore #restore-interface-btn { opacity: 1; pointer-events: auto; }
+  @media (prefers-reduced-motion: reduce) { #restore-interface-btn { transition: none; } }
+
+  /* ---------- Stage caption: bottom-left over a gradient, shared structure at every
+     breakpoint — only right-hand clearance for the rail differs. ---------- */
+  #stage-caption {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 4;
+    padding: 44px 84px 14px 14px;
+    background: linear-gradient(to top, rgba(0, 0, 0, .8), rgba(0, 0, 0, .35) 55%, transparent);
+    color: #fff;
+  }
+  #stage-steering-line {
+    margin: 0 0 .3rem;
+    font-size: .72rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, .88);
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  #stage-caption-head {
+    margin: 0;
+    font-weight: 700;
+    font-size: .95rem;
+    display: flex;
+    align-items: baseline;
+    gap: .45rem;
+    flex-wrap: wrap;
+  }
+  #stage-caption-name::before { content: "@"; opacity: .85; }
+  #stage-caption-karma { font-size: .78rem; font-weight: 700; color: var(--accent); }
+  #stage-caption-text {
+    margin: .3rem 0 0;
+    font-size: .85rem;
+    color: rgba(255, 255, 255, .92);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  #stage-caption-voice {
+    margin: .35rem 0 0;
+    font-size: .74rem;
+    color: rgba(255, 255, 255, .82);
+    display: flex;
+    align-items: center;
+    gap: .3rem;
+  }
+
+  /* ---------- Top bar ---------- */
+  .top-left { display: none; }
+  .top-logo { display: none; }
+  .top-center {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    left: 12px;
+    display: flex;
+    flex-direction: column;
     gap: .4rem;
     z-index: 10;
-    max-width: min(80vw, 560px);
+    max-width: 66vw;
   }
   .live-pill { display: flex; align-items: center; gap: .4rem; font-weight: 700; letter-spacing: .04em; }
   .live-pill.is-live { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -130,42 +276,23 @@
   .live-pill.is-live .live-dot { animation: livepulse 1.4s ease-in-out infinite; }
   @keyframes livepulse { 50% { opacity: .3; } }
   @media (prefers-reduced-motion: reduce) { .live-pill .live-dot { animation: none; } }
-
-  #caption-line {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  #caption-karma-badge { position: relative; display: inline-block; }
-  #caption-karma { font-variant-numeric: tabular-nums; min-width: 1em; display: inline-block; }
+  #live-sep, #live-viewer-count { display: inline; font-weight: 400; }
 
   .top-right {
     position: fixed;
     top: calc(env(safe-area-inset-top, 0px) + 12px);
     right: 12px;
     display: flex;
-    flex-direction: column;
-    align-items: flex-end;
+    align-items: center;
     gap: .5rem;
     z-index: 10;
   }
-
-  .top-left {
-    position: fixed;
-    top: calc(env(safe-area-inset-top, 0px) + 12px);
-    left: 12px;
-    z-index: 10;
-  }
+  #viewer-pill { display: none; }
+  #interface-btn { display: none; }
   #spend-pill { font-weight: 700; font-variant-numeric: tabular-nums; }
 
-  #spend-popover {
+  #spend-popover, #share-popover {
     position: fixed;
-    top: calc(env(safe-area-inset-top, 0px) + 56px);
-    left: 12px;
-    width: min(90vw, 340px);
-    max-height: min(70vh, 520px);
-    overflow-y: auto;
     z-index: 15;
     padding: .9rem;
     display: flex;
@@ -177,6 +304,13 @@
     -webkit-backdrop-filter: blur(14px);
     border-radius: var(--radius);
     color: var(--text);
+  }
+  #spend-popover {
+    top: calc(env(safe-area-inset-top, 0px) + 56px);
+    left: 12px;
+    width: min(90vw, 340px);
+    max-height: min(70vh, 520px);
+    overflow-y: auto;
   }
   .spend-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
   .spend-head strong { font-size: .8rem; letter-spacing: .03em; text-transform: uppercase; }
@@ -213,34 +347,62 @@
   .spend-scene-title { margin: 0; font-weight: 700; }
   .spend-scene-breakdown { margin: .15rem 0 0; font-size: .7rem; color: var(--text-dim); }
 
+  #share-popover {
+    bottom: calc(var(--inputbar-h) + 96px);
+    right: 12px;
+    width: max-content;
+  }
+  #share-copy, #share-telegram {
+    display: block;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font: inherit;
+    font-size: .85rem;
+    font-weight: 600;
+    text-align: left;
+    text-decoration: none;
+    padding: .35rem .3rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #share-copy:hover, #share-telegram:hover { color: var(--accent); }
+
   @media (max-width: 820px) {
-    /* Bottom sheet over the PANEL area only — its top edge matches the video box's
-       bottom edge (100vw / 16:9), so it never covers the video. */
+    /* Bottom sheet over the whole screen, above the pinned input bar. */
     #spend-popover {
       left: 0;
       right: 0;
-      top: calc(env(safe-area-inset-top, 0px) + 100vw * 9 / 16);
-      bottom: 0;
+      top: auto;
+      bottom: var(--inputbar-h);
       width: 100%;
-      max-height: none;
+      max-height: 60vh;
       border-radius: 16px 16px 0 0;
-      padding-bottom: calc(.9rem + env(safe-area-inset-bottom, 0px));
     }
   }
 
+  /* ---------- "Up next": desktop-only steering + queue preview, replaces the old floating
+     left rail. Hidden below 821px; the sheet's QUEUE tab covers the same content there. ---------- */
   #rail {
+    display: none;
     position: fixed;
-    left: 12px;
-    top: calc(env(safe-area-inset-top, 0px) + 148px);
-    bottom: 12px;
-    width: 300px;
+    right: 0;
+    top: var(--topbar-h);
+    width: var(--side-col-w);
+    max-height: 34vh;
     z-index: 9;
     background: var(--panel-bg);
-    border: 1px solid var(--panel-border);
+    border-left: 1px solid var(--panel-border);
     backdrop-filter: blur(14px);
-    border-radius: var(--radius);
     padding: 1rem;
     overflow-y: auto;
+  }
+  .rail-eyebrow {
+    font-size: .68rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 .75rem;
   }
   #rail section + section { margin-top: 1.25rem; }
   #rail h2 {
@@ -250,94 +412,156 @@
     color: var(--text-dim);
     margin: 0 0 .5rem;
   }
+  #steering-body {
+    background: rgba(255, 71, 66, .14);
+    border: 1px solid rgba(255, 71, 66, .35);
+    border-radius: 12px;
+    padding: .6rem .75rem;
+  }
   .steer-hint { font-size: .75rem; color: var(--text-dim); margin: .25rem 0 0; }
+  .q-avatar {
+    display: none;
+    width: 26px;
+    height: 26px;
+    min-width: 26px;
+    border-radius: 50%;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: .72rem;
+    color: #14141c;
+    margin-right: .4rem;
+    vertical-align: middle;
+  }
+  #rail-queue .q-avatar { display: inline-flex; }
+  #rail-queue .queue-item { display: flex; align-items: flex-start; }
+  #rail-queue .queue-item > div { flex: 1; min-width: 0; }
 
+  /* ---------- Panel: chat/queue/rank. A bottom sheet on mobile/landscape, a persistent
+     full-height side column on desktop (styled further in the desktop block below). ---------- */
   #panel {
     position: fixed;
-    right: 12px;
-    top: calc(env(safe-area-inset-top, 0px) + 148px);
-    bottom: 12px;
-    width: 360px;
-    z-index: 9;
+    left: 0;
+    right: 0;
+    bottom: var(--inputbar-h);
+    height: 70dvh;
+    z-index: 11;
     background: var(--panel-bg);
     border: 1px solid var(--panel-border);
     backdrop-filter: blur(14px);
-    border-radius: var(--radius);
+    -webkit-backdrop-filter: blur(14px);
+    border-radius: 20px 20px 0 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    transform: translateY(100%);
+    transition: transform .25s ease;
   }
-  @media (max-width: 820px) {
-    #rail { display: none; }
-    #panel {
-      position: static;
-      flex: 1 1 auto;
-      min-height: 0;
-      width: 100%;
-      border-radius: 16px 16px 0 0;
-    }
-    #tab-queue { display: inline-flex !important; }
+  body.sheet-open #panel { transform: translateY(0); }
+  @media (prefers-reduced-motion: reduce) { #panel { transition: none; } }
+  #sheet-handle {
+    flex: none;
+    width: 36px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .3);
+    margin: .55rem auto 0;
   }
+  #drawer-close {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 1.2rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: .2rem .5rem;
+    z-index: 2;
+  }
+  #sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9;
+    background: rgba(0, 0, 0, .5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .25s ease;
+  }
+  body.sheet-open #sheet-backdrop { opacity: 1; pointer-events: auto; }
+  @media (prefers-reduced-motion: reduce) { #sheet-backdrop { transition: none; } }
 
-  /* ---------- Portrait mobile: video pinned at top, panel fills the rest of the screen ---------- */
+  /* ---------- Overflow "more" sheet (mobile): spend, pitch, pure-TV, Telegram ---------- */
+  #more-btn { display: flex; }
+  #more-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .55);
+  }
+  .sheet-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1;
+    background: #111;
+    border: 1px solid var(--panel-border);
+    border-radius: 20px 20px 0 0;
+    padding: 0 0 calc(.5rem + env(safe-area-inset-bottom, 0px));
+  }
+  #more-sheet-handle {
+    width: 36px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .3);
+    margin: .6rem auto;
+  }
+  .sheet-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-top: 1px solid var(--panel-border);
+    color: var(--text);
+    font: inherit;
+    font-size: .9rem;
+    font-weight: 600;
+    text-align: left;
+    text-decoration: none;
+    padding: .85rem 1.1rem;
+    cursor: pointer;
+  }
+  .sheet-row-value { color: var(--text-dim); font-weight: 400; font-size: .82rem; }
+  .sheet-close { justify-content: center; color: var(--accent); font-weight: 700; }
+
+  /* ---------- Portrait mobile: full-screen TikTok-style player ---------- */
   @media (max-width: 820px) {
-    body { display: flex; flex-direction: column; height: 100dvh; }
-    body.chrome-hidden { justify-content: center; }
+    body { height: 100dvh; }
 
-    #video-stage {
-      position: relative;
-      flex: none;
+    #video-stage { position: fixed; inset: 0; }
+    #video-wrap {
+      position: fixed;
+      top: 50%;
+      left: 0;
       width: 100%;
       aspect-ratio: 16 / 9;
-      margin-top: env(safe-area-inset-top, 0px);
-      background: #000;
+      transform: translateY(-50%);
     }
-    #video-wrap { position: absolute; inset: 0; }
-    #subscriber-container video, #subscriber-container object { object-fit: contain !important; }
-    #heart-layer { position: absolute; inset: 0; }
+    #heart-layer { position: fixed; inset: 0; }
 
-    /* These three wrappers become invisible layout boxes; their children position themselves
-       directly against #video-stage, so spend/live/viewers read as one row on the video's top
-       edge and mute/interface/like sit at its corners. Nothing moves in the DOM for this. */
-    .top-left, .top-center, .top-right { position: static; display: contents; }
-    #spend-pill { position: absolute; top: 8px; left: 8px; z-index: 10; }
-    #live-pill { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 10; }
-    #viewer-pill { position: absolute; top: 8px; right: 8px; z-index: 10; }
-    /* Bottom edge is one row of small corner controls (like / mute / interface); the caption
-       gets a clear row of its own just above it so the two never overlap. */
-    #mute-btn, #interface-btn, #like-btn {
-      position: absolute;
-      bottom: 8px;
-      z-index: 10;
-      min-width: 40px;
-      min-height: 40px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    #interface-btn { right: 8px; }
-    #mute-btn { right: 90px; }
-    #like-btn { left: 8px; transform: none; }
-    #caption-bar { position: absolute; bottom: 52px; left: 8px; right: 8px; margin: 0; z-index: 10; }
-    .pill { padding: .4rem .7rem; font-size: .78rem; }
+    .top-center { top: calc(env(safe-area-inset-top, 0px) + 10px); left: 10px; max-width: 62vw; }
+    .top-right { top: calc(env(safe-area-inset-top, 0px) + 10px); right: 10px; }
 
-    #steering-strip {
-      display: block;
-      flex: none;
-      padding: .5rem .9rem;
-      background: rgba(255, 71, 66, .16);
-      border-bottom: 1px solid var(--panel-border);
-      font-size: .78rem;
-    }
-    #steering-strip span {
-      display: -webkit-box;
-      -webkit-line-clamp: 1;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
+    #action-rail { right: 12px; bottom: calc(var(--inputbar-h) + 28px + env(safe-area-inset-bottom, 0px)); }
+    #stage-caption { bottom: calc(var(--inputbar-h) + env(safe-area-inset-bottom, 0px)); padding-top: 56px; }
 
     #say-input { font-size: 16px; }
     #say-form { padding-bottom: calc(.75rem + env(safe-area-inset-bottom, 0px)); }
+    /* .amend-toggle's hide-until-focused behaviour lives further down (after its base rule),
+       so its plain `display: none` there wins the cascade against the base `display: flex`. */
 
     #pane-chat:empty::after { content: "No ideas yet. Send the first one."; }
     #pane-queue:empty::after { content: "Nothing queued. Send an idea to start it."; }
@@ -352,63 +576,40 @@
 
     #splash-tap, #name-cancel, #name-confirm { min-height: 44px; }
   }
-  /* Drawer controls exist only for landscape phones (shown in the block below). This used to sit
-     inside the portrait query, so desktop never got it and showed a stray close button. */
-  #drawer-btn, #drawer-close { display: none; }
 
-  /* ---------- Landscape phone: video fullscreen, panel becomes a right-side drawer ---------- */
+  /* ---------- Landscape phone: full-bleed video, rail overlaid, sheet as a right-side drawer.
+     No max-width guard: a large phone in landscape can exceed 820px wide. ---------- */
   @media (max-height: 500px) and (orientation: landscape) {
-    body { display: block; height: auto; }
-    #video-stage { position: fixed; inset: 0; width: auto; aspect-ratio: auto; margin-top: 0; }
+    body { height: 100dvh; }
+    #video-stage { position: fixed; inset: 0; }
+    #video-wrap { position: fixed; inset: 0; transform: none; aspect-ratio: auto; }
     #subscriber-container video, #subscriber-container object { object-fit: cover !important; }
     .chrome { display: none; }
-    /* Each of these sets its own ID-level `display` in the portrait query above, which (being an
-       ID) would otherwise outrank the blanket `.chrome` hide for the width<=820 landscape phones
-       (e.g. an SE in landscape) that match both media queries. Restate them here explicitly. */
-    #interface-btn, #steering-strip, #mute-btn, #like-btn { display: none; }
-    /* Wide landscape phones (>820px) never match the portrait query that reveals this tab, and
-       the drawer replaces the desktop #rail that would otherwise carry the queue. */
-    #tab-queue { display: inline-flex !important; }
+
+    #action-rail {
+      right: 10px;
+      bottom: calc(var(--inputbar-h) + 10px + env(safe-area-inset-bottom, 0px));
+      gap: 12px;
+    }
+    #stage-caption { bottom: calc(var(--inputbar-h) + env(safe-area-inset-bottom, 0px)); padding-top: 28px; }
+
+    #say-form { position: fixed; left: 0; right: 0; bottom: 0; padding-bottom: env(safe-area-inset-bottom, 0px); }
+    .amend-toggle { display: none !important; }
 
     #panel {
-      display: flex;
-      position: fixed;
-      inset: 0 0 0 auto;
-      width: min(86vw, 340px);
+      right: 0;
+      left: auto;
+      bottom: 0;
+      top: 0;
       height: auto;
+      width: min(86vw, 340px);
       border-radius: 0;
       transform: translateX(100%);
-      transition: transform .2s ease;
-      z-index: 20;
       padding-bottom: env(safe-area-inset-bottom, 0px);
     }
-    body.drawer-open #panel { transform: translateX(0); }
-
-    #drawer-btn {
-      display: inline-flex;
-      position: fixed;
-      bottom: 12px;
-      right: 12px;
-      z-index: 15;
-      min-width: 40px;
-      min-height: 40px;
-      align-items: center;
-      justify-content: center;
-    }
-    #drawer-close {
-      display: inline-flex;
-      position: absolute;
-      top: 8px;
-      right: 8px;
-      background: transparent;
-      border: none;
-      color: var(--text);
-      font-size: 1.2rem;
-      line-height: 1;
-      cursor: pointer;
-      padding: .1rem .35rem;
-      z-index: 5;
-    }
+    body.sheet-open #panel { transform: translateX(0); }
+    #sheet-handle { display: none; }
+    #drawer-close { display: inline-flex; }
   }
   @media (max-height: 500px) and (orientation: landscape) and (prefers-reduced-motion: reduce) {
     #panel { transition: none; }
@@ -435,6 +636,8 @@
   .pane { height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: .5rem; }
   .pane[hidden] { display: none; }
 
+  /* Mobile keeps the coloured chat bubble; desktop restyles to plain TikTok-comment rows
+     (avatar + name + time, text underneath, no big coloured background) in the desktop block. */
   .chat-bubble { border-radius: 12px; padding: .5rem .7rem; color: #14141c; }
   .chat-meta { display: flex; gap: .4rem; align-items: baseline; font-size: .72rem; font-weight: 700; }
   .chat-time { font-weight: 400; opacity: .65; margin-left: auto; }
@@ -464,19 +667,34 @@
     border-top: 1px solid var(--panel-border);
   }
   #you-karma { font-variant-numeric: tabular-nums; }
+  @media (max-width: 820px) {
+    /* Dropped on mobile: the pinned input bar is narrow, and the sheet's RANK tab already
+       shows everyone's karma, this viewer's included. */
+    .you-chip { display: none; }
+  }
 
+  /* Pinned input bar: fixed at every breakpoint, only its left/right/width differ below. */
   #say-form {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 12;
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: .5rem;
     padding: .75rem;
-    border-top: 1px solid var(--panel-border);
+    background: linear-gradient(to top, rgba(0, 0, 0, .55), transparent);
   }
   #say-input {
     flex: 1;
-    min-width: 0;
+    min-width: 8rem;
     border-radius: 999px;
     border: 1px solid var(--panel-border);
-    background: rgba(0, 0, 0, .35);
+    background: rgba(20, 20, 24, .55);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     color: var(--text);
     padding: .55rem .9rem;
   }
@@ -548,6 +766,11 @@
     letter-spacing: .02em;
   }
   .splash-card p { margin: 0; color: var(--text-dim); }
+  .splash-line-mobile { display: none; }
+  @media (max-width: 820px) {
+    .splash-line-desktop { display: none; }
+    .splash-line-mobile { display: block; }
+  }
   #splash-tap {
     margin-top: .5rem;
     background: var(--accent);
@@ -585,23 +808,9 @@
   .toast.show { opacity: 1; transform: translateY(0); }
   @media (prefers-reduced-motion: reduce) { .toast { transition: opacity .2s; transform: none; } }
 
-  /* pitch:start — karma-gated sponsored voice-over. Self-contained, safe to drop in a conflict. */
-  #say-form { flex-wrap: wrap; }
-  #say-input { min-width: 8rem; }
-  #pitch-btn {
-    border-radius: 999px;
-    border: 1px solid var(--panel-border);
-    background: transparent;
-    color: var(--text);
-    font: inherit;
-    font-size: .8rem;
-    font-weight: 700;
-    white-space: nowrap;
-    padding: .55rem .9rem;
-    cursor: pointer;
-  }
-  #pitch-btn.is-locked { opacity: .55; }
-  #pitch-badge { display: block; margin-top: .35rem; }
+  /* pitch:start — karma-gated sponsored voice-over. Self-contained, safe to drop in a conflict.
+     #pitch-btn's own look now comes from .rail-item/.rail-icon (action-rail, above) and
+     .sheet-row (#more-pitch-btn, the mobile overflow-sheet entry point). */
   #pitch-modal {
     position: fixed;
     inset: 0;
@@ -617,7 +826,9 @@
   /* pitch:end */
 
   /* amend:start — "Yes, and": change one thing about the scene on air. Self-contained, safe to
-     drop in a conflict, mirrors the pitch:start/end block above. */
+     drop in a conflict, mirrors the pitch:start/end block above. Desktop default: always visible,
+     beside the input field. Mobile (further down, after this rule so it wins the cascade tie)
+     hides it until the field is focused, as two small chips above the field. */
   .amend-toggle { display: flex; gap: .3rem; }
   .mode-btn {
     border-radius: 999px;
@@ -647,6 +858,16 @@
     vertical-align: middle;
   }
   #caption-amends-chip { margin-left: .3rem; }
+  @media (max-width: 820px) {
+    .amend-toggle {
+      position: absolute;
+      bottom: 100%;
+      left: 0;
+      margin-bottom: .4rem;
+      display: none;
+    }
+    #say-form:focus-within .amend-toggle { display: flex; }
+  }
   /* amend:end */
   /* voice:start — hold-to-talk mic (SLNG STT via POST say-voice). Self-contained, safe to drop
      in a conflict. Fixed circle size, no extra flex width, so it can't push Say off at 360px. */
@@ -740,14 +961,141 @@
     .karma-pop { animation: heart-fade .5s ease-out forwards; }
   }
 
+  /* Pure TV: hide every piece of chrome, leaving only the picture and #restore-interface-btn
+     (styled up in the action-rail section — it is deliberately never part of .chrome). Several
+     of these set their own ID-level `display` elsewhere in the page, which (being an ID) would
+     otherwise outrank the blanket `.chrome` hide below regardless of media query — the actual
+     "did I stay hidden" trap this file has hit before. Restate them explicitly. */
   body.chrome-hidden .chrome { display: none; }
-  /* #panel/#spend-popover set their own `display: flex`; an ID selector outranks the class rule
-     above, so restate it here with enough specificity to actually hide it. Same reason
-     #steering-strip, #like-btn and #mute-btn (each with their own ID-level `display`
-     somewhere in the page) are listed here too. */
   body.chrome-hidden #panel, body.chrome-hidden #rail, body.chrome-hidden #spend-popover,
-  body.chrome-hidden #steering-strip, body.chrome-hidden #like-btn,
-  body.chrome-hidden #mute-btn { display: none; }
+  body.chrome-hidden #share-popover, body.chrome-hidden #action-rail,
+  body.chrome-hidden #stage-caption, body.chrome-hidden #say-form,
+  body.chrome-hidden #sheet-backdrop, body.chrome-hidden #mute-btn { display: none; }
+
+  /* ================= Desktop (>820px wide, >500px tall) ================= */
+  @media (min-width: 821px) and (min-height: 501px) {
+    body { overflow: hidden; }
+
+    #video-stage {
+      position: fixed;
+      top: var(--topbar-h);
+      left: 0;
+      right: calc(var(--side-col-w) + 112px);
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    #video-wrap {
+      position: relative;
+      top: auto;
+      left: auto;
+      transform: none;
+      flex: none;
+      width: min(100%, 1280px, calc((100vh - var(--topbar-h) - 32px) * 16 / 9));
+      aspect-ratio: 16 / 9;
+      border-radius: 16px;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, .55);
+    }
+    #subscriber-container { border-radius: inherit; }
+    #heart-layer { position: fixed; inset: 0; }
+    #offair-card { border-radius: 12px; }
+    #stage-caption { border-radius: 0 0 16px 16px; padding-right: 24px; }
+
+    /* Pure TV grows the stage to the full window (backdrop stays), hides everything else, and
+       leaves only the small fading restore control (see the shared chrome-hidden rules above). */
+    body.chrome-hidden #video-stage {
+      right: 0;
+      top: 0;
+      padding: 0;
+    }
+    body.chrome-hidden #video-wrap {
+      width: min(100vw, calc(100vh * 16 / 9));
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    /* ---- Top bar ---- */
+    .top-left {
+      display: flex;
+      align-items: center;
+      position: fixed;
+      top: 14px;
+      left: 20px;
+    }
+    .top-logo { display: block; height: 36px; width: auto; border-radius: 8px; }
+    .top-center { top: 14px; left: 68px; max-width: 40vw; }
+    #live-sep, #live-viewer-count { display: none; }
+    .top-right { top: 14px; right: 20px; }
+    #viewer-pill { display: inline-flex; }
+    #interface-btn { display: inline-flex; }
+
+    /* ---- Action rail: beside the stage, bottom-aligned with it ---- */
+    #action-rail { right: calc(var(--side-col-w) + 24px); bottom: 48px; gap: 20px; }
+    #more-btn { display: none; }
+    #pitch-btn, #spend-pill { display: flex; }
+
+    /* Popovers open beside the rail button that triggers them. */
+    #spend-popover, #share-popover {
+      left: auto;
+      top: auto;
+      right: calc(var(--side-col-w) + 24px + var(--rail-btn) + 12px);
+      bottom: 24px;
+    }
+
+    /* ---- Side column: "Up next" stacked above the persistent chat/rank panel ---- */
+    #rail { display: block; }
+    #panel {
+      left: auto;
+      right: 0;
+      top: calc(var(--topbar-h) + 34vh);
+      bottom: 0;
+      height: auto;
+      width: var(--side-col-w);
+      border-radius: 0;
+      border-left: 1px solid var(--panel-border);
+      transform: none;
+    }
+    #sheet-handle, #drawer-close, #sheet-backdrop { display: none; }
+
+    /* TikTok-style comment rows instead of coloured bubbles. */
+    .chat-bubble { background: none !important; padding: 0; color: var(--text); display: flex; gap: .55rem; }
+    .chat-bubble::before {
+      content: "";
+      flex: none;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--chat-avatar-bg, rgba(255, 255, 255, .25));
+      margin-top: .1rem;
+    }
+    .chat-meta { font-size: .78rem; }
+    .chat-name { color: var(--text); }
+    .chat-time { color: var(--text-dim); }
+    .chat-text { color: var(--text-dim); }
+
+    #say-form {
+      left: auto;
+      right: 0;
+      bottom: 0;
+      width: var(--side-col-w);
+      background: transparent;
+      border-top: 1px solid var(--panel-border);
+      background: rgba(0, 0, 0, .2);
+    }
+    .you-chip { display: block; }
+  }
+
+  /* Narrow desktop (821-1100px): side column narrows and the rail overlays the stage's own
+     right edge instead of sitting beside it, so the picture stays as large as possible. */
+  @media (min-width: 821px) and (max-width: 1100px) and (min-height: 501px) {
+    :root { --side-col-w: 320px; }
+    #video-stage { right: var(--side-col-w); }
+    #action-rail { right: calc(var(--side-col-w) + 12px); bottom: 24px; }
+    body.chrome-hidden #action-rail { right: 24px; }
+    #spend-popover, #share-popover { right: calc(var(--side-col-w) + 12px + var(--rail-btn) + 12px); }
+  }
 </style>
 </head>
 <body>
@@ -844,6 +1192,12 @@
         <span class="rail-icon" aria-hidden="true">&#8943;</span>
       </button>
     </div>
+
+    <!-- Pure-TV mode hides everything else; this is the only way back, so it is never marked
+         chrome. It stays invisible until chrome-hidden, then fades in on pointer/touch activity. -->
+    <button type="button" class="pill pill-btn" id="restore-interface-btn" aria-pressed="true">
+      interface
+    </button>
   </div>
 
   <div class="chrome" id="share-popover" role="dialog" aria-label="Share polsTV" hidden>
@@ -974,9 +1328,9 @@
     <div class="splash-card">
       <img class="splash-logo" src="assets/logo.jpg" width="960" height="540" alt="polsTV, slop television">
       <div class="wordmark" id="splash-wordmark" hidden></div>
-      <p class="chrome">one shared AI channel, live right now</p>
-      <p class="chrome">type an idea &mdash; the scene on air morphs into it</p>
-      <p class="chrome">tap the video to like; likes are karma for whoever prompted it</p>
+      <p class="splash-line-desktop">one shared AI channel, live right now</p>
+      <p class="splash-line-desktop">type an idea &mdash; the scene on air morphs into it</p>
+      <p class="splash-line-desktop">tap the video to like; likes are karma for whoever prompted it</p>
       <p class="splash-line-mobile">One shared AI channel. Say what happens next.</p>
       <button type="button" id="splash-tap">tap to tune in</button>
     </div>
