@@ -137,6 +137,19 @@ describe("steering", () => {
     expect(outcome.ended?.text).toBe("a cat");
   });
 
+  it("carries the announcer clip on the steer only when there is one", () => {
+    const ctx = setup();
+    const a = ctx.say("ana", "a cat");
+    if (!a.ok) throw new Error("setup failed");
+    ctx.tick(STEER_GAP_MS);
+    expect(ctx.channel.beginSteer(a.idea.id, "p", "/announcer/x").announcerUrl).toBe("/announcer/x");
+    ctx.channel.resolveSteer(ctx.channel.pendingSteer()?.steerId ?? -1, true);
+    const b = ctx.say("bob", "a dog");
+    if (!b.ok) throw new Error("setup failed");
+    ctx.tick(STEER_GAP_MS);
+    expect(ctx.channel.beginSteer(b.idea.id, "p")).not.toHaveProperty("announcerUrl");
+  });
+
   it("refuses to steer an idea that is not queued", () => {
     const ctx = setup();
     ctx.tick(STEER_GAP_MS);
@@ -156,6 +169,14 @@ describe("steering", () => {
 });
 
 describe("likes and karma", () => {
+  it("shows current karma on chat lines posted before the likes came in", () => {
+    const ctx = setup();
+    air(ctx, "ana", "a cat");
+    ctx.channel.like("bob");
+    expect(ctx.channel.status().chat[0]).toMatchObject({ name: "ANA", karma: 1 });
+    expect(ctx.channel.status().chat[0]).not.toHaveProperty("uid");
+  });
+
   it("credits the prompter once per viewer per scene", () => {
     const ctx = setup();
     air(ctx, "ana", "a cat");

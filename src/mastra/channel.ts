@@ -33,6 +33,8 @@ export interface Steer {
   steerId: number;
   ideaId: number;
   prompt: string;
+  /** Spoken "up next" line for the broadcaster to mix in. Absent when synthesis failed. */
+  announcerUrl?: string;
 }
 
 export interface ChatLine {
@@ -76,7 +78,7 @@ export class Channel {
   private lastSteerAt = 0;
   private scene: Scene | undefined;
   private likedBy = new Set<string>();
-  private chat: ChatLine[] = [];
+  private chat: (Omit<ChatLine, "karma"> & { uid: string })[] = [];
   private players = new Map<string, { name: string; karma: number }>();
   private viewers = new Map<string, number>();
   private broadcasterSeenAt = 0;
@@ -96,7 +98,7 @@ export class Channel {
       name: idea.name,
       text: idea.text,
       at: idea.at,
-      karma: this.karmaOf(idea.uid),
+      uid: idea.uid,
     });
     this.chat = this.chat.slice(-CHAT_KEEP);
     return { ok: true, idea };
@@ -134,10 +136,15 @@ export class Channel {
     return this.pending;
   }
 
-  beginSteer(ideaId: number, prompt: string): Steer {
+  beginSteer(ideaId: number, prompt: string, announcerUrl?: string): Steer {
     if (!this.canSteer()) throw new Error("beginSteer called while a steer is in flight or too soon");
     if (!this.queue.some((idea) => idea.id === ideaId)) throw new Error(`idea ${ideaId} is not queued`);
-    this.pending = { steerId: this.nextId++, ideaId, prompt };
+    this.pending = {
+      steerId: this.nextId++,
+      ideaId,
+      prompt,
+      ...(announcerUrl ? { announcerUrl } : {}),
+    };
     this.lastSteerAt = this.now();
     return this.pending;
   }
@@ -209,7 +216,8 @@ export class Channel {
           text: idea.text,
           karma: this.karmaOf(idea.uid),
         })),
-      chat: this.chat,
+      // Karma is read at status time so the stars in chat move as likes come in.
+      chat: this.chat.map(({ uid, ...line }) => ({ ...line, karma: this.karmaOf(uid) })),
       rank: [...this.players.values()]
         .filter((player) => player.karma > 0)
         .sort((a, b) => b.karma - a.karma)

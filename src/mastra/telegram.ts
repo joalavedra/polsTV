@@ -63,7 +63,7 @@ const sceneHistory = new SceneHistory();
 // --- submit_idea -----------------------------------------------------------------------------
 
 export interface SubmitIdeaDeps {
-  moderate: (text: string) => Promise<Verdict>;
+  moderate: (text: string, name: string) => Promise<Verdict>;
   addIdea: (input: { uid: string; name: string; text: string; source: "telegram" }) => AddResult;
   queuePosition: (uid: string) => number | undefined;
 }
@@ -86,7 +86,7 @@ export async function submitIdeaLogic(
 ): Promise<SubmitIdeaResult> {
   let verdict: Verdict;
   try {
-    verdict = await deps.moderate(text);
+    verdict = await deps.moderate(text, name);
   } catch (error) {
     console.error(`moderation failed for telegram idea from ${uid}:`, error);
     return { queued: false, reason: "Moderation is unavailable right now, try again in a bit." };

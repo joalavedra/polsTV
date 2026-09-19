@@ -7,6 +7,7 @@ import { LibSQLStore } from "@mastra/libsql";
 import { Mastra } from "@mastra/core/mastra";
 import { registerApiRoute } from "@mastra/core/server";
 import { z } from "zod";
+import { announcerLine, clip, synthesise } from "./announcer";
 import { channel } from "./channel";
 import { MAX_IDEA_CHARS, moderate, moderator, sceneWriter, writeSteer } from "./showrunner";
 import { notifySceneChange, showrunner } from "./telegram";
@@ -102,7 +103,7 @@ export const mastra = new Mastra({
           if (!body.success) return c.json({ ok: false, reason: "Invalid message." }, 400);
           let verdict;
           try {
-            verdict = await moderate(body.data.text);
+            verdict = await moderate(body.data.text, body.data.name);
           } catch (error) {
             console.error("moderation failed, idea not queued:", error);
             return c.json({ ok: false, reason: "Moderation is unavailable, try again." }, 503);
@@ -150,11 +151,30 @@ export const mastra = new Mastra({
           if (!idea || !channel.canSteer() || writingSteer) return c.body(null, 204);
           writingSteer = true;
           try {
-            const prompt = await writeSteer(channel.status().now?.prompt, idea.text);
-            return c.json(channel.beginSteer(idea.id, prompt));
+            // The announcer is garnish: a TTS failure is logged and the steer goes out without it.
+            const [prompt, announcerUrl] = await Promise.all([
+              writeSteer(channel.status().now?.prompt, idea.text),
+              synthesise(`steer-${idea.id}`, announcerLine(idea.name, idea.text))
+                .then((clipId) => `/announcer/${clipId}`)
+                .catch((error: unknown) => {
+                  console.error(`announcer failed for idea ${idea.id}, steering without it:`, error);
+                  return undefined;
+                }),
+            ]);
+            return c.json(channel.beginSteer(idea.id, prompt, announcerUrl));
           } finally {
             writingSteer = false;
           }
+        },
+      }),
+
+      registerApiRoute("/announcer/:clipId", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => {
+          const audio = clip(c.req.param("clipId"));
+          if (!audio) return c.notFound();
+          return c.body(new Uint8Array(audio), 200, { "content-type": "audio/mpeg" });
         },
       }),
 
