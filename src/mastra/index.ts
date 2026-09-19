@@ -11,7 +11,10 @@ import { clip, synthesise } from "./announcer";
 import type { Idea } from "./channel";
 import { channel } from "./channel";
 import { livePitchDeps, PITCH_MIN_KARMA, pitchSlot, submitPitch } from "./pitch";
+import type { SteerWriteOutcome } from "./showrunner";
+import { handleSay, type SayDeps, type SayInput } from "./say";
 import {
+  amendWriter,
   MAX_IDEA_CHARS,
   MAX_PITCH_BRIEF_CHARS,
   moderate,
@@ -20,6 +23,7 @@ import {
   pitchModerator,
   pitchWriter,
   sceneWriter,
+  writeAmend,
   writeSteer,
   writeVoiceOver,
 } from "./showrunner";
@@ -27,6 +31,7 @@ import type { TokenUsage } from "./spend";
 import { spend } from "./spend";
 import { notifyPitchDropped, notifySceneChange, showrunner } from "./telegram";
 import { ticker } from "./ticker";
+import { transcribe } from "./transcriber";
 import { videoAccess } from "./vonage";
 
 const broadcasterSecret = process.env["BROADCASTER_SECRET"];
@@ -61,6 +66,8 @@ interface SteerVoice {
   url: string | undefined;
 }
 
+const ZERO_USAGE: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+
 /**
  * The line the channel's voice reads over the scene a steer is about to bring up: written by the
  * narrator, then synthesised by SLNG. The clip is garnish — a TTS failure is logged and the steer
@@ -80,12 +87,16 @@ async function narrateSteer(idea: Idea): Promise<SteerVoice> {
 
 // Web callers may not claim a "telegram:" uid; those only come from the Telegram channel.
 const uid = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);
+const name = z.string().trim().min(1).max(24);
 const sayBody = z.object({
   uid,
-  name: z.string().trim().min(1).max(24),
+  name,
   text: z.string().trim().min(1).max(MAX_IDEA_CHARS),
   source: z.enum(["web", "voice"]).default("web"),
+  kind: z.enum(["new", "amend"]).default("new"),
 });
+// /say-voice's text-free fields: same uid/name rules as /say, reused rather than redeclared.
+const sayVoiceFields = z.object({ uid, name });
 const likeBody = z.object({ uid });
 const pitchBody = z.object({
   uid,
@@ -188,8 +199,56 @@ function postTooSoon(client: string): boolean {
   return false;
 }
 
+/** The next candidate to steer, dropping any amend whose target scene has already moved on or is
+ * full up on changes — "Yes, and" only ever touches the scene it was written for. */
+function nextSteerableIdea(): Idea | undefined {
+  let idea = channel.nextIdea();
+  while (idea && channel.isStaleAmend(idea)) {
+    channel.dropIdea(idea.id);
+    spend.markNotAired(idea.id);
+    idea = channel.nextIdea();
+  }
+  return idea;
+}
+
+/** New ideas transition from the current scene; amends restate it and change one thing. */
+async function writeForIdea(idea: Idea, currentPrompt: string | undefined): Promise<SteerWriteOutcome> {
+  if (idea.kind === "new") return writeSteer(currentPrompt, idea.text);
+  if (currentPrompt === undefined) {
+    throw new Error(`amend idea ${idea.id} has no scene on air to amend`);
+  }
+  return writeAmend(currentPrompt, idea.text);
+}
+
+// Only proxied (public) traffic is limited; localhost has no forwarding header.
+function clientIp(c: { req: { header(name: string): string | undefined } }): string | undefined {
+  return c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for");
+}
+
+// A MediaRecorder blob's type carries a codec parameter (e.g. "audio/webm;codecs=opus"); strip it
+// before comparing against the accepted list or handing it to SLNG.
+function declaredAudioType(audio: Blob): string {
+  return (audio.type || "application/octet-stream").split(";")[0]?.trim() ?? "";
+}
+
+const sayDeps: SayDeps = {
+  moderate,
+  addIdea: (input) => channel.addIdea(input),
+  recordModeration: (target, n, t, usage) => spend.recordModeration(target, n, t, usage),
+  recordStt: (target, n, t, audioSeconds) => spend.recordStt(target, n, t, audioSeconds),
+};
+
+// /say-voice's audio boundary: MediaRecorder clips for a 10 s hold-to-talk cap land well under
+// this; anything smaller than 1 KB is not real speech.
+const MIN_VOICE_AUDIO_BYTES = 1_000;
+const MAX_VOICE_AUDIO_BYTES = 1_500_000;
+// Verified live against SLNG (docs/cards/slng.md UNVERIFIED note): all four, including Safari's
+// audio/mp4 (aac), are accepted with no extra encoding hint.
+const ACCEPTED_VOICE_TYPES = new Set(["audio/webm", "audio/ogg", "audio/mp4", "audio/wav"]);
+const MIN_HEARD_CHARS = 3;
+
 export const mastra = new Mastra({
-  agents: { moderator, narrator, pitchModerator, pitchWriter, sceneWriter, showrunner },
+  agents: { moderator, sceneWriter, amendWriter, narrator, pitchModerator, pitchWriter, showrunner },
   // Channels (Telegram) need storage on the Mastra instance or subscriptions, dedup and approvals
   // reset on every restart. Also backs the showrunner's per-user memory (docs/cards/mastra-nebius).
   storage: new LibSQLStore({ id: "mastra-storage", url: "file:./mastra.db" }),
@@ -234,6 +293,20 @@ export const mastra = new Mastra({
             "content-type": assets[file] ?? "application/octet-stream",
             "cache-control": "public, max-age=3600",
           });
+        },
+      }),
+
+      // Viewers on phones cannot show us their console. The page posts one capability report per
+      // load; it is only logged. This is how "it says incompatible browser on my iPhone" gets facts.
+      registerApiRoute("/diag", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          const client = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for") ?? "local";
+          if (postTooSoon(`diag:${client}`)) return c.body(null, 429);
+          const report = (await c.req.text()).slice(0, 2_000).replace(/[\r\n]+/g, " ");
+          console.info(`client_diag ${report}`);
+          return c.body(null, 204);
         },
       }),
 
@@ -309,29 +382,61 @@ export const mastra = new Mastra({
         handler: async (c) => {
           const body = sayBody.safeParse(await c.req.json().catch(() => null));
           if (!body.success) return c.json({ ok: false, reason: "Invalid message." }, 400);
-          // Only proxied (public) traffic is limited; localhost has no forwarding header.
-          const client = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for");
+          const client = clientIp(c);
           if (client && postTooSoon(client)) {
             return c.json({ ok: false, reason: "Slow down a little." }, 429);
           }
-          let verdict, usage;
+          const outcome = await handleSay(sayDeps, body.data);
+          return c.json(outcome.body, outcome.status);
+        },
+      }),
+
+      // multipart/form-data: uid, name, audio. Same moderated path as /say, spoken instead of
+      // typed — see handleSay. docs/CONTRACT.md.
+      registerApiRoute("/say-voice", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          const form = await c.req.formData().catch(() => undefined);
+          const audio = form?.get("audio");
+          const rawFields = { uid: form?.get("uid"), name: form?.get("name") };
+          const fields = sayVoiceFields.safeParse(rawFields);
+          if (!fields.success || !(audio instanceof Blob)) {
+            return c.json({ ok: false, reason: "Invalid message." }, 400);
+          }
+          const declaredType = declaredAudioType(audio);
+          if (!ACCEPTED_VOICE_TYPES.has(declaredType)) {
+            return c.json({ ok: false, reason: `Unsupported audio type: ${declaredType}.` }, 415);
+          }
+          if (audio.size < MIN_VOICE_AUDIO_BYTES || audio.size > MAX_VOICE_AUDIO_BYTES) {
+            return c.json({ ok: false, reason: "Recording is too short or too long." }, 415);
+          }
+          // Rate limit BEFORE calling SLNG: each call costs money (same limiter as /say).
+          const client = clientIp(c);
+          if (client && postTooSoon(client)) {
+            return c.json({ ok: false, reason: "Slow down a little." }, 429);
+          }
+          const bytes = new Uint8Array(await audio.arrayBuffer());
+          let transcription;
           try {
-            ({ verdict, usage } = await moderate(body.data.text, body.data.name));
+            transcription = await transcribe(bytes, declaredType);
           } catch (error) {
-            console.error("moderation failed, idea not queued:", error);
-            return c.json({ ok: false, reason: "Moderation is unavailable, try again." }, 503);
+            console.error("transcription failed:", error);
+            return c.json({ ok: false, reason: "Could not hear that, try again." }, 503);
           }
-          if (!verdict.ok) {
-            spend.recordModeration("rejected", body.data.name, body.data.text, usage);
-            return c.json(verdict, 422);
+          const heard = transcription.text.trim();
+          const audioSeconds = transcription.audioSeconds;
+          if (heard.length < MIN_HEARD_CHARS) {
+            if (audioSeconds !== undefined) {
+              spend.recordStt("rejected", fields.data.name, "", audioSeconds);
+            }
+            const reason = "Didn't catch that. Try again, a bit closer to the mic.";
+            return c.json({ ok: false, reason, heard }, 422);
           }
-          const added = channel.addIdea(body.data);
-          if (!added.ok) {
-            spend.recordModeration("rejected", body.data.name, body.data.text, usage);
-            return c.json(added, 409);
-          }
-          spend.recordModeration(added.idea.id, added.idea.name, added.idea.text, usage);
-          return c.json({ ok: true, id: added.idea.id });
+          const voiceInput: SayInput = { ...fields.data, text: heard, source: "voice" };
+          const stt = audioSeconds === undefined ? undefined : { audioSeconds };
+          const outcome = await handleSay(sayDeps, voiceInput, stt);
+          return c.json({ ...outcome.body, heard }, outcome.status);
         },
       }),
 
@@ -392,18 +497,24 @@ export const mastra = new Mastra({
           const pitch = pitchForBroadcaster();
           const pending = channel.pendingSteer();
           if (pending) return c.json({ ...pending, ...pitch });
-          const idea = channel.nextIdea();
+          const idea = nextSteerableIdea();
           if (!idea || !channel.canSteer() || writingSteer) {
             return pitch ? c.json(pitch) : c.body(null, 204);
           }
           writingSteer = true;
           try {
+            // An amend is a small on-screen tweak: no narrated "up next" clip for it (that voice
+            // call itself costs Nebius tokens, not just the TTS) — a voice line for every small
+            // tweak would talk over the show.
+            const noVoice: SteerVoice = { usage: ZERO_USAGE, clipId: undefined, url: undefined };
             const [steerWrite, voice] = await Promise.all([
-              writeSteer(channel.status().now?.prompt, idea.text),
-              narrateSteer(idea),
+              writeForIdea(idea, channel.status().now?.prompt),
+              idea.kind === "amend" ? noVoice : narrateSteer(idea),
             ]);
             spend.recordSteerWrite(idea.id, idea.name, idea.text, steerWrite.usage);
-            spend.recordSteerWrite(idea.id, idea.name, idea.text, voice.usage);
+            if (idea.kind !== "amend") {
+              spend.recordSteerWrite(idea.id, idea.name, idea.text, voice.usage);
+            }
             if (voice.clipId) {
               spend.recordTts(idea.id, idea.name, idea.text, clip(voice.clipId)?.length ?? 0);
             }
@@ -434,14 +545,16 @@ export const mastra = new Mastra({
           if (!body.success) return c.json({ ok: false }, 400);
           if (!body.data.applied) console.warn("director rejected a steer:", body.data.reason);
           // Captured before resolving: on rejection resolveSteer's result carries no ideaId, but
-          // the ledger needs one to move the idea's cost into notAired instead of a scene.
+          // the ledger needs one to move the idea's cost into notAired instead of a scene. Also
+          // the right id for an applied amend: its own (pendingBefore.ideaId), not the scene it
+          // amended (onAir.ideaId) — that's where recordSteerWrite filed its cost.
           const pendingBefore = channel.pendingSteer();
-          const { onAir, ended } = channel.resolveSteer(body.data.steerId, body.data.applied);
+          const { onAir, ended, amended } = channel.resolveSteer(body.data.steerId, body.data.applied);
           if (pendingBefore?.steerId === body.data.steerId) {
-            if (onAir) spend.markAired(onAir.ideaId, onAir.name, onAir.text);
+            if (onAir) spend.markAired(pendingBefore.ideaId, onAir.name, onAir.text);
             else spend.markNotAired(pendingBefore.ideaId);
           }
-          void notifySceneChange({ onAir, ended });
+          void notifySceneChange({ onAir, ended, amended });
           return c.json({ ok: true, onAir: onAir?.ideaId ?? null });
         },
       }),
