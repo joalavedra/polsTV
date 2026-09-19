@@ -12,6 +12,7 @@ import { channel } from "./channel";
 import { MAX_IDEA_CHARS, moderate, moderator, sceneWriter, writeSteer } from "./showrunner";
 import { spend } from "./spend";
 import { notifySceneChange, showrunner } from "./telegram";
+import { ticker } from "./ticker";
 import { videoAccess } from "./vonage";
 
 const broadcasterSecret = process.env["BROADCASTER_SECRET"];
@@ -178,6 +179,36 @@ export const mastra = new Mastra({
         method: "GET",
         requiresAuth: false,
         handler: async (c) => c.json(spend.snapshot()),
+      }),
+
+      // Public, read-only: the ticker bar broadcaster.html draws. Images arrive over Telegram
+      // (telegram.ts's onDirectMessage); these just serve what's currently on it.
+      registerApiRoute("/ticker", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) =>
+          c.json({
+            items: ticker.list().map((item) => ({
+              id: item.id,
+              name: item.name,
+              caption: item.caption,
+              url: `ticker/${item.id}`,
+            })),
+          }),
+      }),
+
+      registerApiRoute("/ticker/:id", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => {
+          const id = Number(c.req.param("id"));
+          const item = Number.isInteger(id) ? ticker.get(id) : undefined;
+          if (!item) return c.notFound();
+          return c.body(new Uint8Array(item.bytes), 200, {
+            "content-type": item.mime,
+            "cache-control": "public, max-age=600",
+          });
+        },
       }),
 
       registerApiRoute("/say", {
