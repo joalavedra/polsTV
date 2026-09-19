@@ -644,6 +644,49 @@
   }
   #caption-amends-chip { margin-left: .3rem; }
   /* amend:end */
+  /* voice:start — hold-to-talk mic (SLNG STT via POST say-voice). Self-contained, safe to drop
+     in a conflict. Fixed circle size, no extra flex width, so it can't push Say off at 360px. */
+  .mic-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
+  #mic-btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid var(--panel-border);
+    background: var(--accent);
+    color: #fff;
+    font-size: 1.15rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  #mic-btn:disabled { opacity: .6; cursor: default; }
+  #mic-btn.recording { background: #d33f3f; animation: mic-pulse 1s ease-in-out infinite; }
+  @keyframes mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(211, 63, 63, .5); }
+    50% { box-shadow: 0 0 0 8px rgba(211, 63, 63, 0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #mic-btn.recording { animation: none; opacity: .75; }
+  }
+  #mic-status {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-bottom: .3rem;
+    white-space: nowrap;
+    font-size: .7rem;
+    font-weight: 700;
+    background: rgba(0, 0, 0, .8);
+    border: 1px solid var(--panel-border);
+    border-radius: 999px;
+    padding: .2rem .55rem;
+  }
+  /* voice:end */
 
   #heart-layer { position: fixed; inset: 0; z-index: 6; pointer-events: none; overflow: hidden; }
   .heart-burst {
@@ -815,6 +858,17 @@
       <input id="say-input" type="text" maxlength="280" autocomplete="off"
         placeholder="What should happen next&hellip;">
       <button id="say-btn" type="submit">Say</button>
+      <!-- voice:start — hold-to-talk mic (SLNG STT). Self-contained, safe to drop in a conflict.
+           Starts hidden: shown only after a feature check, never before, so unsupported
+           browsers see no mic at all. -->
+      <span class="mic-wrap">
+        <button type="button" id="mic-btn" aria-label="Hold to speak your idea"
+          aria-pressed="false" hidden>
+          <span aria-hidden="true">&#127908;</span>
+        </button>
+        <span id="mic-status" aria-hidden="true" hidden></span>
+      </span>
+      <!-- voice:end -->
       <!-- pitch:start -->
       <button id="pitch-btn" type="button">3&#9733; to unlock</button>
       <!-- pitch:end -->
@@ -1406,6 +1460,194 @@
     refreshMe();
     setInterval(refreshMe, ME_POLL_MS);
     // pitch:end
+
+    // voice:start — hold-to-talk mic (SLNG STT via POST say-voice). Self-contained; reuses
+    // getName/openNameModal/showToast/setSaying/wantMuted/subscriberContainer from above.
+    const MIC_MAX_MS = 10_000;
+    const MIC_MIN_MS = 400;
+    const micBtn = document.getElementById("mic-btn");
+    const micStatus = document.getElementById("mic-status");
+
+    function pickMicMimeType() {
+      if (typeof MediaRecorder === "undefined") return undefined;
+      for (const type of ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"]) {
+        if (MediaRecorder.isTypeSupported(type)) return type;
+      }
+      return undefined;
+    }
+    const micMimeType = pickMicMimeType();
+    // Feature-checked only — never asks for the mic itself. That only happens on first press.
+    const micSupported = window.isSecureContext
+      && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+      && !!micMimeType;
+    if (micSupported) micBtn.hidden = false;
+
+    let micSession = null; // { recorder, chunks, stream, startedAt, wasMuted }
+    let micTimerHandle = null;
+    let micHolding = false; // true from press to release; guards a getUserMedia() that outlives it
+    let micSending = false;
+
+    function setMicTimer(seconds) {
+      micStatus.hidden = false;
+      micStatus.textContent = seconds.toFixed(1) + "s";
+    }
+
+    function teardownMicSession(session) {
+      for (const track of session.stream.getTracks()) track.stop();
+      for (const video of subscriberContainer.querySelectorAll("video")) video.muted = session.wasMuted;
+      micBtn.classList.remove("recording");
+      micBtn.setAttribute("aria-pressed", "false");
+      if (micTimerHandle) { clearInterval(micTimerHandle); micTimerHandle = null; }
+    }
+
+    async function beginRecording() {
+      if (!getName()) { openNameModal(() => {}); return; }
+      if (micSession || micSending) return;
+      micHolding = true;
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch {
+        micBtn.hidden = true; // denied, or no device — hide and do nothing else
+        return;
+      }
+      if (!micHolding) { // released (or Escaped) before the permission prompt resolved
+        for (const track of stream.getTracks()) track.stop();
+        return;
+      }
+      const chunks = [];
+      const recorder = new MediaRecorder(stream, { mimeType: micMimeType });
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data && event.data.size > 0) chunks.push(event.data);
+      });
+      // The channel has sound: mute it for the hold, or its own audio ends up in the transcript.
+      const wasMuted = wantMuted;
+      for (const video of subscriberContainer.querySelectorAll("video")) video.muted = true;
+      recorder.start();
+      micSession = { recorder, chunks, stream, startedAt: performance.now(), wasMuted };
+      micBtn.classList.add("recording");
+      micBtn.setAttribute("aria-pressed", "true");
+      setMicTimer(0);
+      micTimerHandle = setInterval(() => {
+        if (!micSession) return;
+        const elapsedMs = performance.now() - micSession.startedAt;
+        setMicTimer(Math.min(elapsedMs, MIC_MAX_MS) / 1000);
+        if (elapsedMs >= MIC_MAX_MS) finishRecording(); // hard cap: auto-send
+      }, 100);
+    }
+
+    function cancelRecording() {
+      micHolding = false;
+      if (!micSession) return;
+      const session = micSession;
+      micSession = null;
+      session.recorder.stop();
+      teardownMicSession(session);
+      micStatus.hidden = true;
+    }
+
+    function finishRecording() {
+      micHolding = false;
+      if (!micSession) return;
+      const session = micSession;
+      micSession = null;
+      const elapsedMs = performance.now() - session.startedAt;
+      if (elapsedMs < MIC_MIN_MS) { // too short to be real speech — cancel, no request
+        session.recorder.stop();
+        teardownMicSession(session);
+        micStatus.hidden = true;
+        return;
+      }
+      const stopped = new Promise((resolve) => {
+        session.recorder.addEventListener("stop", resolve, { once: true });
+      });
+      session.recorder.stop();
+      teardownMicSession(session);
+      micStatus.hidden = false;
+      micStatus.textContent = "listening…";
+      stopped.then(() => sendRecording(new Blob(session.chunks, { type: session.recorder.mimeType })));
+    }
+
+    async function sendRecording(blob) {
+      const name = getName();
+      micSending = true;
+      micBtn.disabled = true;
+      setSaying(true); // same "checking…" state the typed path shows
+      const form = new FormData();
+      form.append("uid", uid);
+      form.append("name", name);
+      form.append("audio", blob, "say");
+      let status = 0;
+      let data = null;
+      try {
+        const res = await fetch("say-voice", { method: "POST", body: form });
+        status = res.status;
+        data = await res.json().catch(() => null);
+      } catch { /* status stays 0, falls through to the retry toast below */ }
+      micSending = false;
+      micBtn.disabled = false;
+      setSaying(false);
+      micStatus.hidden = true;
+      const heard = data && typeof data.heard === "string" ? data.heard : "";
+      const heardSuffix = heard ? ` Heard: "${heard}"` : "";
+      if (status === 200) {
+        showToast("queued!" + heardSuffix);
+        return;
+      }
+      if (data && typeof data.reason === "string" && data.reason) {
+        showToast(data.reason + heardSuffix);
+        return;
+      }
+      showToast(SAY_RETRY_MSG);
+    }
+
+    function withinMicButton(clientX, clientY) {
+      const rect = micBtn.getBoundingClientRect();
+      return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+    }
+
+    let micPointerId = null;
+    micBtn.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      micPointerId = event.pointerId;
+      beginRecording();
+    });
+    // Bound on window, not micBtn: without setPointerCapture a touch's pointermove retargets to
+    // whatever is now under the finger, so a listener on the button alone would stop firing the
+    // moment the finger left it — exactly when "slid off" needs detecting.
+    window.addEventListener("pointermove", (event) => {
+      if (event.pointerId !== micPointerId || !micSession) return;
+      if (!withinMicButton(event.clientX, event.clientY)) cancelRecording();
+    });
+    window.addEventListener("pointerup", (event) => {
+      if (event.pointerId !== micPointerId) return;
+      micPointerId = null;
+      finishRecording();
+    });
+    window.addEventListener("pointercancel", (event) => {
+      if (event.pointerId !== micPointerId) return;
+      micPointerId = null;
+      cancelRecording();
+    });
+    let micKeyHolding = false;
+    micBtn.addEventListener("keydown", (event) => {
+      if (event.key !== " " && event.key !== "Enter") return;
+      event.preventDefault(); // stop Space/Enter's default click-on-keyup
+      if (event.repeat || micKeyHolding) return;
+      micKeyHolding = true;
+      beginRecording();
+    });
+    micBtn.addEventListener("keyup", (event) => {
+      if (event.key !== " " && event.key !== "Enter") return;
+      if (!micKeyHolding) return;
+      micKeyHolding = false;
+      finishRecording();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && (micSession || micHolding)) cancelRecording();
+    });
+    // voice:end
 
     // ---------- diff-render helpers ----------
     function syncList(container, items, keyFn, renderFn) {

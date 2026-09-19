@@ -12,6 +12,7 @@ import type { Idea } from "./channel";
 import { channel } from "./channel";
 import { livePitchDeps, PITCH_MIN_KARMA, pitchSlot, submitPitch } from "./pitch";
 import type { SteerWriteOutcome } from "./showrunner";
+import { handleSay, type SayDeps, type SayInput } from "./say";
 import {
   amendWriter,
   MAX_IDEA_CHARS,
@@ -30,6 +31,7 @@ import type { TokenUsage } from "./spend";
 import { spend } from "./spend";
 import { notifyPitchDropped, notifySceneChange, showrunner } from "./telegram";
 import { ticker } from "./ticker";
+import { transcribe } from "./transcriber";
 import { videoAccess } from "./vonage";
 
 const broadcasterSecret = process.env["BROADCASTER_SECRET"];
@@ -85,13 +87,16 @@ async function narrateSteer(idea: Idea): Promise<SteerVoice> {
 
 // Web callers may not claim a "telegram:" uid; those only come from the Telegram channel.
 const uid = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);
+const name = z.string().trim().min(1).max(24);
 const sayBody = z.object({
   uid,
-  name: z.string().trim().min(1).max(24),
+  name,
   text: z.string().trim().min(1).max(MAX_IDEA_CHARS),
   source: z.enum(["web", "voice"]).default("web"),
   kind: z.enum(["new", "amend"]).default("new"),
 });
+// /say-voice's text-free fields: same uid/name rules as /say, reused rather than redeclared.
+const sayVoiceFields = z.object({ uid, name });
 const likeBody = z.object({ uid });
 const pitchBody = z.object({
   uid,
@@ -214,6 +219,33 @@ async function writeForIdea(idea: Idea, currentPrompt: string | undefined): Prom
   }
   return writeAmend(currentPrompt, idea.text);
 }
+
+// Only proxied (public) traffic is limited; localhost has no forwarding header.
+function clientIp(c: { req: { header(name: string): string | undefined } }): string | undefined {
+  return c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for");
+}
+
+// A MediaRecorder blob's type carries a codec parameter (e.g. "audio/webm;codecs=opus"); strip it
+// before comparing against the accepted list or handing it to SLNG.
+function declaredAudioType(audio: Blob): string {
+  return (audio.type || "application/octet-stream").split(";")[0]?.trim() ?? "";
+}
+
+const sayDeps: SayDeps = {
+  moderate,
+  addIdea: (input) => channel.addIdea(input),
+  recordModeration: (target, n, t, usage) => spend.recordModeration(target, n, t, usage),
+  recordStt: (target, n, t, audioSeconds) => spend.recordStt(target, n, t, audioSeconds),
+};
+
+// /say-voice's audio boundary: MediaRecorder clips for a 10 s hold-to-talk cap land well under
+// this; anything smaller than 1 KB is not real speech.
+const MIN_VOICE_AUDIO_BYTES = 1_000;
+const MAX_VOICE_AUDIO_BYTES = 1_500_000;
+// Verified live against SLNG (docs/cards/slng.md UNVERIFIED note): all four, including Safari's
+// audio/mp4 (aac), are accepted with no extra encoding hint.
+const ACCEPTED_VOICE_TYPES = new Set(["audio/webm", "audio/ogg", "audio/mp4", "audio/wav"]);
+const MIN_HEARD_CHARS = 3;
 
 export const mastra = new Mastra({
   agents: { moderator, sceneWriter, amendWriter, narrator, pitchModerator, pitchWriter, showrunner },
@@ -350,29 +382,61 @@ export const mastra = new Mastra({
         handler: async (c) => {
           const body = sayBody.safeParse(await c.req.json().catch(() => null));
           if (!body.success) return c.json({ ok: false, reason: "Invalid message." }, 400);
-          // Only proxied (public) traffic is limited; localhost has no forwarding header.
-          const client = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for");
+          const client = clientIp(c);
           if (client && postTooSoon(client)) {
             return c.json({ ok: false, reason: "Slow down a little." }, 429);
           }
-          let verdict, usage;
+          const outcome = await handleSay(sayDeps, body.data);
+          return c.json(outcome.body, outcome.status);
+        },
+      }),
+
+      // multipart/form-data: uid, name, audio. Same moderated path as /say, spoken instead of
+      // typed — see handleSay. docs/CONTRACT.md.
+      registerApiRoute("/say-voice", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          const form = await c.req.formData().catch(() => undefined);
+          const audio = form?.get("audio");
+          const rawFields = { uid: form?.get("uid"), name: form?.get("name") };
+          const fields = sayVoiceFields.safeParse(rawFields);
+          if (!fields.success || !(audio instanceof Blob)) {
+            return c.json({ ok: false, reason: "Invalid message." }, 400);
+          }
+          const declaredType = declaredAudioType(audio);
+          if (!ACCEPTED_VOICE_TYPES.has(declaredType)) {
+            return c.json({ ok: false, reason: `Unsupported audio type: ${declaredType}.` }, 415);
+          }
+          if (audio.size < MIN_VOICE_AUDIO_BYTES || audio.size > MAX_VOICE_AUDIO_BYTES) {
+            return c.json({ ok: false, reason: "Recording is too short or too long." }, 415);
+          }
+          // Rate limit BEFORE calling SLNG: each call costs money (same limiter as /say).
+          const client = clientIp(c);
+          if (client && postTooSoon(client)) {
+            return c.json({ ok: false, reason: "Slow down a little." }, 429);
+          }
+          const bytes = new Uint8Array(await audio.arrayBuffer());
+          let transcription;
           try {
-            ({ verdict, usage } = await moderate(body.data.text, body.data.name));
+            transcription = await transcribe(bytes, declaredType);
           } catch (error) {
-            console.error("moderation failed, idea not queued:", error);
-            return c.json({ ok: false, reason: "Moderation is unavailable, try again." }, 503);
+            console.error("transcription failed:", error);
+            return c.json({ ok: false, reason: "Could not hear that, try again." }, 503);
           }
-          if (!verdict.ok) {
-            spend.recordModeration("rejected", body.data.name, body.data.text, usage);
-            return c.json(verdict, 422);
+          const heard = transcription.text.trim();
+          const audioSeconds = transcription.audioSeconds;
+          if (heard.length < MIN_HEARD_CHARS) {
+            if (audioSeconds !== undefined) {
+              spend.recordStt("rejected", fields.data.name, "", audioSeconds);
+            }
+            const reason = "Didn't catch that. Try again, a bit closer to the mic.";
+            return c.json({ ok: false, reason, heard }, 422);
           }
-          const added = channel.addIdea(body.data);
-          if (!added.ok) {
-            spend.recordModeration("rejected", body.data.name, body.data.text, usage);
-            return c.json(added, 409);
-          }
-          spend.recordModeration(added.idea.id, added.idea.name, added.idea.text, usage);
-          return c.json({ ok: true, id: added.idea.id });
+          const voiceInput: SayInput = { ...fields.data, text: heard, source: "voice" };
+          const stt = audioSeconds === undefined ? undefined : { audioSeconds };
+          const outcome = await handleSay(sayDeps, voiceInput, stt);
+          return c.json({ ...outcome.body, heard }, outcome.status);
         },
       }),
 

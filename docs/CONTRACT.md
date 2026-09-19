@@ -12,6 +12,8 @@ Custom routes cannot live under `/api` (Mastra reserves it).
 | `GET /status?uid=<uid>` | poll every 1 s; `uid` counts you as a viewer | `Status` (below) |
 | `GET /me?uid=<uid>` | — | `{ karma, pitchUnlocked, pitchCooldownSeconds }` for one viewer. Not folded into `/status`: that route is polled every second by every viewer, this one is only needed when the pitch button has to know where you stand. `400` on an invalid uid. |
 | `POST /say` | `{ uid, name, text, source?: "web"｜"voice", kind?: "new"｜"amend" }` | `200 {ok:true,id}` · `422 {ok:false,reason}` moderated out · `409 {ok:false,reason}` refused by the channel (see below) · `503` moderation down · `400` invalid |
+| `POST /say` | `{ uid, name, text, source?: "web"｜"voice" }` | `200 {ok:true,id}` · `422 {ok:false,reason}` moderated out · `409 {ok:false,reason}` already queued · `503` moderation down · `400` invalid |
+| `POST /say-voice` | `multipart/form-data`: `uid`, `name`, `audio` (blob) | same codes as `/say` (with `source: "voice"`), plus `415 {ok:false,reason}` bad audio type/size and `422 {ok:false,reason,heard}` when nothing was heard; every response from this route that has a transcript includes `heard: "<transcript>"` |
 | `POST /pitch` | `{ uid, name, brief }` | `200 {ok:true,line}` — `line` is the ad read the voice will speak · `403` under `PITCH_MIN_KARMA` (3) · `429` per-user cooldown (3 min) or rate limit · `409` another pitch has the slot · `422` moderated out · `503` moderation, writing or TTS down · `400` invalid. Every failure carries `{ok:false,code,reason}`. |
 | `POST /like` | `{ uid }` | `{ ok: boolean }` — false if already liked, own scene, or nothing on air |
 | `GET /viewer-token` | — | `{ applicationId, sessionId, token }` subscribe-only Vonage token |
@@ -36,6 +38,13 @@ An accepted amend is tagged with the scene it targets. If that scene is no longe
 the amend's turn comes up, the broadcaster's next `next-steer` poll silently drops it (never applies
 it to a different scene) and moves on to the next queued item — the submitter sees nothing beyond
 their idea quietly never airing.
+`/say-voice`'s `uid`/`name` follow the same rules as `/say`, reused not redeclared. `audio`: 1 KB–1.5
+MB, declared type one of `audio/webm`, `audio/ogg`, `audio/mp4`, `audio/wav` (Safari's `audio/mp4`
+recordings are accepted — verified live against SLNG, docs/cards/slng.md, src/mastra/transcriber.ts).
+The same per-client rate limit as `/say` applies before the SLNG call, since each call costs money.
+The route: validate the boundary → rate limit → transcribe on SLNG (`transcriber.ts`) → trim → if
+under 3 characters, `422` with the reason above → otherwise the idea runs through the exact same
+moderated path as `/say` (`handleSay` in `say.ts`), with `source: "voice"`.
 
 ```ts
 interface SpendSnapshot {
@@ -44,7 +53,7 @@ interface SpendSnapshot {
   byProvider: {
     fal: { usd; seconds };              // Director open-session seconds
     nebius: { usd; inputTokens; outputTokens; calls };
-    slng: { usd; audioSeconds; calls }; // TTS audio, mp3 bytes / 16000
+    slng: { usd; audioSeconds; calls }; // TTS output + STT input audio, pooled
     vonage: { usd; participantMinutes };
   };
   scenes: { ideaId; name; text; usd; byProvider }[];  // last 8 aired scenes, newest first
@@ -58,9 +67,8 @@ interface SpendSnapshot {
 Every figure is an ESTIMATE computed from src/mastra/spend.ts's published rate constants, not a
 real invoice. `scenes` is a rolling window of the last 8 aired scenes; once a 9th airs, the oldest
 drops out of this list but its cost stays folded into `byProvider`/`totalUsd` — so
-`sum(scenes[].usd) + notAired.usd + idle.usd + pitches.usd` only equals `totalUsd` while 8 or fewer
-`sum(scenes[].usd) + notAired.usd + idle.usd + ticker.usd` only equals `totalUsd` while 8 or fewer
-scenes have aired in this process's lifetime.
+`sum(scenes[].usd) + notAired.usd + idle.usd + pitches.usd + ticker.usd` only equals `totalUsd`
+while 8 or fewer scenes have aired in this process's lifetime.
 
 ```ts
 interface Status {
