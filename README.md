@@ -143,6 +143,25 @@ before it is ever stored; a rejection or a moderation error/timeout both refuse 
 image per user at a time, at most one every 15 seconds — a newer accepted photo still replaces the
 older — and the ticker holds at most 12 items. Text messages to the bot are unaffected.
 
+### Viewer history
+
+Click a name anywhere on the viewer page (chat, the leaderboard, "Up next", or the stage caption's
+`@name`) to see that viewer's HISTORY: a grid of the scenes they've put on air. Because the channel
+is one continuous stream with no per-scene video files, "their videos" is one still (JPEG) captured
+from the canvas per aired scene, plus the idea text — not a recording. The still is captured by the
+broadcaster ~21 s after its steer applies and stored under the scene's `ideaId`
+(`src/mastra/scene-shot.ts`, `POST /b/:secret/scene-shot`); an amend re-uses its scene's `ideaId`,
+so a later shot simply replaces the earlier one.
+
+Stored at `data/history/`: `index.json` (the metadata: who, what, when) plus one `<ideaId>.jpg` per
+still, written atomically and loaded once at boot. This is the one piece of state that **survives a
+server restart** — everything else (`channel.ts`'s queue/karma, `vonage.ts`'s session id) is still
+in-memory and resets. A missing or corrupt `index.json` logs a warning and starts empty rather than
+crashing the server. Capped at 300 entries overall and 24 returned per viewer
+(`HISTORY_MAX_ENTRIES`/`HISTORY_PER_VIEWER`, `src/mastra/history.ts`); past the overall cap the
+oldest entry's still is deleted along with it. A viewer is identified by `pid`, not their uid — see
+`src/mastra/pid.ts` and the privacy note in `docs/CONTRACT.md`.
+
 ## Sponsor tech
 
 | Sponsor | What it does here |
@@ -228,6 +247,10 @@ src/mastra/
 ├── showrunner.ts          The five Nebius agents: moderation, steering, amends, the pitch and ad
 ├── announcer.ts           SLNG TTS: synthesises and serves the spoken clips (and their clean lines)
 ├── ad-banner.ts           On-screen AD banner state: which line is airing, until when
+├── history.ts             Per-viewer scene HISTORY: pure store, newest first, capped
+├── history-io.ts          HISTORY disk persistence: data/history/index.json + <ideaId>.jpg
+├── scene-shot.ts          POST /b/:secret/scene-shot boundary validation, dependency-injected
+├── pid.ts                 uid -> public viewer id (pid), one-way, never reveals the uid
 ├── telegram.ts            Telegram channel: showrunner agent, its tools, proactive DMs
 ├── vonage.ts              Vonage session creation and token minting
 └── public/
@@ -248,7 +271,7 @@ pnpm lint         # oxlint src
 ## Known limits
 
 - All state is in memory (`channel.ts`'s queue/karma, `vonage.ts`'s session id) and resets on every
-  server restart.
+  server restart — except viewer HISTORY (above), which is persisted to `data/history/`.
 - The 15-minute session-rotation handover (`maybeRotate()` / `rotateSession()`) is untested at the
   actual cap — expect a possible visible seam until someone runs a session that long.
 - One broadcaster tab is a single point of failure: if it drops, nobody is publishing until it (or a
