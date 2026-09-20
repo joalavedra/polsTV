@@ -115,6 +115,7 @@
     lastSeenSteerId: undefined,
     lastLatencyMs: undefined,
     steerSentAt: new Map(), // steerId -> Date.now() when we acted on it
+    adClipTimers: new Map(), // steerId -> pending announcer setTimeout, cleared on fire/cancel
     steerPollBusy: false,
     idlePollBusy: false,
     opens: [], // timestamps of session opens, for the 3-per-10-min guard
@@ -367,6 +368,38 @@
     drainClips();
   }
 
+  // Director takes this long from a sent prompt to the matching frame reaching the screen
+  // (measured; see state.steerSentAt / the steerLatency operator field). Queuing the ad clip the
+  // moment its steer arrives plays it over the PREVIOUS scene instead of its own.
+  // ponytail: fixed delay, not tied to Director's chunk/prompt_version messages; upgrade path is
+  // triggering on the first chunk carrying this steer's prompt version instead.
+  const AD_CLIP_DELAY_MS = 17_000;
+
+  /**
+   * Queue a steer's announcer clip once Director's pipeline has had time to put its scene on
+   * screen. `?director=off` has no such pipeline (steers resolve instantly on the ident card), so
+   * there it enqueues immediately, as today.
+   */
+  function scheduleAnnouncerClip(steerId, url) {
+    if (!url) return;
+    if (state.directorOff) return enqueueClip("announcer", steerId, url);
+    const timer = setTimeout(() => {
+      state.adClipTimers.delete(steerId);
+      enqueueClip("announcer", steerId, url);
+    }, AD_CLIP_DELAY_MS);
+    state.adClipTimers.set(steerId, timer);
+    log("clip_delayed", { key: `announcer-${steerId}`, ms: AD_CLIP_DELAY_MS });
+  }
+
+  /** Drop a still-pending announcer clip: its steer will never put its scene on screen. */
+  function cancelAnnouncerTimer(steerId, reason) {
+    const timer = state.adClipTimers.get(steerId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    state.adClipTimers.delete(steerId);
+    log("clip_delay_cancelled", { key: `announcer-${steerId}`, reason });
+  }
+
   /** Tell the server the pitch had its turn, so the next viewer can claim the slot. */
   async function reportPitchResult(pitchId, failure) {
     try {
@@ -500,6 +533,9 @@
 
   function teardownDirectorSession(phase) {
     const d = state.director;
+    // Every scene still waiting on its 17s delay dies with this session: it will never reach
+    // the screen, so its ad clip must not play over whatever comes next (ident card or error).
+    for (const steerId of state.adClipTimers.keys()) cancelAnnouncerTimer(steerId, "teardown");
     if (d.session) {
       try {
         d.session.close();
@@ -533,6 +569,7 @@
   }
 
   async function reportSteerResult(steerId, applied, reason) {
+    if (!applied) cancelAnnouncerTimer(steerId, reason ?? "not_applied");
     const sentAt = state.steerSentAt.get(steerId);
     if (applied && sentAt) state.lastLatencyMs = Date.now() - sentAt;
     state.steerSentAt.delete(steerId);
@@ -778,7 +815,7 @@
     state.lastSeenSteerId = steer.steerId;
     state.steerSentAt.set(steer.steerId, Date.now());
     state.idle.queueEmptySince = null;
-    enqueueClip("announcer", steer.steerId, steer.announcerUrl); // whether Director is on or off
+    scheduleAnnouncerClip(steer.steerId, steer.announcerUrl);
     if (state.directorOff) return resolveIdentSteer(steer);
     if (state.director.session) return sendSteer(steer.prompt, steer.steerId);
     return openDirectorSession(steer.prompt, steer.steerId);
