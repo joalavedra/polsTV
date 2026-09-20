@@ -1,6 +1,6 @@
 /**
  * Telegram photo intake for the ticker: a viewer sends the bot a photo (optionally with a
- * caption) and, once it clears moderation, it goes on the ticker for 5 seconds. A viewer may add
+ * caption) and, once it clears moderation, it goes on the ticker for 30 seconds. A viewer may add
  * at most one photo every 15 seconds (ticker.ts's TICKER_COOLDOWN_MS), checked before any
  * download or moderation call runs. Text messages are untouched — telegram.ts still routes those
  * to the showrunner agent as today.
@@ -21,7 +21,7 @@ import { log } from "./log";
 export const TICKER_MIN_SHORT_SIDE_PX = 240;
 export const TICKER_MAX_DOWNLOAD_BYTES = 1_000_000;
 export const TICKER_MAX_CAPTION_CHARS = 60;
-export const TICKER_ACCEPTED_REPLY = "On the ticker now, for 5 seconds";
+export const TICKER_ACCEPTED_REPLY = "On the ticker now, for 30 seconds";
 
 const NO_CAPTION_PLACEHOLDER = "a shared photo";
 const VISION_TIMEOUT_MS = 8_000;
