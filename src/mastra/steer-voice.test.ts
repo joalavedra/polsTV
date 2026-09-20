@@ -4,7 +4,6 @@ import { AD_WRITE_TIMEOUT_MS, decideSteerVoice, SILENT_VOICE } from "./steer-voi
 
 function deps(overrides: Partial<SteerVoiceDeps> = {}): SteerVoiceDeps {
   return {
-    isAdIdea: () => true,
     writeAdRead: async () => ({
       line: "A word from Ana. Croak Stand: lemonade, ribbited.",
       usage: { inputTokens: 20, outputTokens: 12 },
@@ -25,10 +24,10 @@ describe("decideSteerVoice", () => {
   it("steers silent with no writer or TTS call when the idea does not ask for an ad", async () => {
     const writeAdRead = vi.fn();
     const synthesise = vi.fn();
-    const result = await decideSteerVoice(
-      deps({ isAdIdea: () => false, writeAdRead, synthesise }),
-      idea,
-    );
+    const result = await decideSteerVoice(deps({ writeAdRead, synthesise }), {
+      ...idea,
+      text: "a capybara quietly runs a laundrette",
+    });
     expect(result).toEqual(SILENT_VOICE);
     expect(writeAdRead).not.toHaveBeenCalled();
     expect(synthesise).not.toHaveBeenCalled();
