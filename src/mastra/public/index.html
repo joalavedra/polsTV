@@ -849,6 +849,111 @@
   }
   /* adbanner:end */
 
+  /* profile:start — per-viewer HISTORY sheet: click a name anywhere to see the scenes they've put
+     on air. Self-contained, safe to drop in a conflict. Modal on desktop, bottom sheet on phones —
+     mirrors #pitch-modal's centered overlay and #more-sheet's slide-up panel. */
+  .q-name, .chat-name, .rank-name, #stage-caption-name {
+    cursor: pointer;
+  }
+  .q-name:hover, .chat-name:hover, .rank-name:hover, #stage-caption-name:hover {
+    text-decoration: underline;
+  }
+  #profile-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 36;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, .78);
+    padding: 1.5rem;
+    opacity: 1;
+    transition: opacity .18s ease-out;
+  }
+  #profile-sheet[hidden] { display: none; }
+  /* #profile-sheet sets its own ID-level `display`, which would otherwise outrank the blanket
+     `.chrome` hide below regardless of media query — the same trap #ad-banner's comment documents. */
+  body.chrome-hidden #profile-sheet { display: none; }
+  #profile-panel {
+    background: #111;
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius);
+    width: min(92vw, 560px);
+    max-height: min(80vh, 640px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transform: translateY(0);
+    opacity: 1;
+    transition: transform .18s ease-out, opacity .18s ease-out;
+  }
+  #profile-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: .75rem;
+    padding: 1rem 1.1rem .75rem;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  #profile-head-info { min-width: 0; }
+  #profile-name { margin: 0; font-weight: 700; font-size: 1.05rem; overflow-wrap: anywhere; }
+  #profile-meta { margin: .25rem 0 0; font-size: .82rem; color: var(--text-dim); }
+  #profile-close {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--panel-border);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+  #profile-body { overflow-y: auto; padding: 1rem 1.1rem 1.25rem; }
+  #profile-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .7rem; }
+  .profile-tile { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
+  .profile-tile-img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, .08);
+    border: 1px solid var(--panel-border);
+  }
+  .profile-tile-text {
+    margin: 0;
+    font-size: .74rem;
+    color: var(--text-dim);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .profile-tile-time { margin: 0; font-size: .68rem; color: var(--text-dim); opacity: .75; }
+  #profile-loading, #profile-error, #profile-empty {
+    margin: 1rem 0;
+    font-size: .85rem;
+    color: var(--text-dim);
+    text-align: center;
+  }
+  @media (max-width: 820px) {
+    #profile-sheet { align-items: flex-end; padding: 0; background: rgba(0, 0, 0, .55); }
+    #profile-panel {
+      width: 100%;
+      max-height: 80vh;
+      border-radius: 20px 20px 0 0;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    #profile-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #profile-sheet, #profile-panel { transition: none; }
+  }
+  /* profile:end */
+
   #splash, #name-modal {
     position: fixed;
     inset: 0;
@@ -1806,6 +1911,27 @@
       <button type="button" class="sheet-row sheet-close" id="more-close">Close</button>
     </div>
   </div>
+
+  <!-- profile:start — per-viewer HISTORY sheet: click a name anywhere to see the scenes they've
+       put on air. Self-contained, safe to drop in a conflict. -->
+  <div id="profile-sheet" hidden>
+    <div id="profile-panel" role="dialog" aria-modal="true" aria-labelledby="profile-name">
+      <div id="profile-head">
+        <div id="profile-head-info">
+          <p id="profile-name"></p>
+          <p id="profile-meta"></p>
+        </div>
+        <button type="button" id="profile-close" aria-label="Close">&times;</button>
+      </div>
+      <div id="profile-body">
+        <p id="profile-loading" hidden>Loading…</p>
+        <p id="profile-error" hidden>Couldn't load this profile. Try again.</p>
+        <p id="profile-empty" hidden>No scenes on air yet.</p>
+        <div id="profile-grid"></div>
+      </div>
+    </div>
+  </div>
+  <!-- profile:end -->
 
   <!-- adbanner:start — on-screen AD slate, shown while the channel's voice reads an ad. class="chrome"
        hides it with the rest of the chrome in pure-TV mode and in landscape-phone mode. -->
@@ -2982,9 +3108,14 @@
       }
       for (const [key, el] of existing) if (!seen.has(key)) el.remove();
     }
+    // profile:start — every row that names a viewer carries data-pid, read by ONE delegated click
+    // handler (below) rather than a listener per row. Rows only ever gain the attribute here; the
+    // handler is what turns it into a clickable profile.
     function renderQueueItem(item, el) {
       if (!el) {
         el = h("div", "queue-item");
+        el.setAttribute("role", "button");
+        el.tabIndex = 0;
         // Desktop-only avatar tint (CSS hides it in #pane-queue, the mobile sheet's QUEUE tab);
         // amend: kind-tag is empty/hidden for a "new" idea, "change" for an amend. Unknown
         // fields on `item` (a future kind, say) are simply never read here — safe by default.
@@ -2992,6 +3123,7 @@
         body.append(h("span", "kind-tag"), h("span", "q-name"), h("span", "q-karma"), h("p", "q-text"));
         el.append(h("span", "q-avatar"), body);
       }
+      el.dataset.pid = item.pid || "";
       const avatar = el.querySelector(".q-avatar");
       setText(avatar, (item.name || "?").charAt(0).toUpperCase());
       setStyle(avatar, "background", `hsl(${hashHue(item.name)}, 85%, 85%)`);
@@ -3006,10 +3138,13 @@
     function renderChatItem(item, el) {
       if (!el) {
         el = h("div", "chat-bubble");
+        el.setAttribute("role", "button");
+        el.tabIndex = 0;
         const meta = h("div", "chat-meta");
         meta.append(h("span", "chat-name"), h("span", "chat-karma"), h("span", "chat-time"));
         el.append(meta, h("p", "chat-text"));
       }
+      el.dataset.pid = item.pid || "";
       const tint = `hsl(${hashHue(item.name)}, 85%, 85%)`;
       setStyle(el, "background", tint); // mobile bubble; desktop tints ::before instead
       setStyle(el, "--chat-avatar-bg", tint);
@@ -3024,8 +3159,11 @@
     function renderRankItem(item, el) {
       if (!el) {
         el = h("div", "rank-item");
+        el.setAttribute("role", "button");
+        el.tabIndex = 0;
         el.append(h("span", "rank-name"), h("span", "rank-karma"));
       }
+      el.dataset.pid = item.pid || "";
       const prevKarma = el.dataset.karma;
       el.dataset.karma = String(item.karma);
       setText(el.querySelector(".rank-name"), item.name);
@@ -3037,6 +3175,7 @@
       }
       return el;
     }
+    // profile:end
     // The viewer's own karma comes from the pitch block's `me` poll (keyed by uid, so two viewers
     // with the same nickname no longer share a number). Both blocks once declared `myKarma`, and
     // a duplicate declaration in a module is a SyntaxError that kills the whole page.
@@ -3045,6 +3184,117 @@
       youChip.hidden = !name;
       if (name) setText(youKarma, String(myKarma));
     }
+
+    // profile:start — per-viewer HISTORY sheet, opened from any name (chat, rank, queue, the
+    // caption's @name) via ONE delegated click/keydown handler reading each row's data-pid.
+    // Self-contained; follows #pitch-modal/#more-sheet's open/close mechanics (backdrop click,
+    // ×, Esc, focus moved in and restored, aria-modal).
+    const profileSheet = document.getElementById("profile-sheet");
+    const profilePanel = document.getElementById("profile-panel");
+    const profileName = document.getElementById("profile-name");
+    const profileMeta = document.getElementById("profile-meta");
+    const profileClose = document.getElementById("profile-close");
+    const profileLoading = document.getElementById("profile-loading");
+    const profileError = document.getElementById("profile-error");
+    const profileEmpty = document.getElementById("profile-empty");
+    const profileGrid = document.getElementById("profile-grid");
+    stageCaptionName.setAttribute("role", "button");
+    stageCaptionName.tabIndex = 0;
+
+    function formatRelativeTime(ms) {
+      const seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
+      if (seconds < 60) return "just now";
+      const minutes = Math.round(seconds / 60);
+      if (minutes < 60) return `${minutes} min ago`;
+      const hours = Math.round(minutes / 60);
+      if (hours < 24) return `${hours} h ago`;
+      return `${Math.round(hours / 24)} d ago`;
+    }
+    function renderProfileTile(item) {
+      const tile = h("div", "profile-tile");
+      const img = document.createElement("img");
+      img.className = "profile-tile-img";
+      img.loading = "lazy";
+      img.alt = item.text;
+      img.src = item.shot;
+      img.addEventListener(
+        "error",
+        () => {
+          img.removeAttribute("src");
+          img.style.background = "rgba(255,255,255,.08)";
+        },
+        { once: true },
+      );
+      tile.append(img, h("p", "profile-tile-text", item.text), h("p", "profile-tile-time", formatRelativeTime(item.airedAt)));
+      return tile;
+    }
+    let profileTrigger = null;
+    let profileRequestId = 0;
+    function closeProfile() {
+      if (profileSheet.hidden) return;
+      profileSheet.hidden = true;
+      const trigger = profileTrigger;
+      profileTrigger = null;
+      trigger?.focus();
+    }
+    async function openProfile(pid, trigger) {
+      if (!pid) return;
+      profileTrigger = trigger ?? null;
+      profileSheet.hidden = false;
+      profileClose.focus();
+      profileName.textContent = "";
+      profileMeta.textContent = "";
+      profileGrid.textContent = "";
+      profileError.hidden = true;
+      profileEmpty.hidden = true;
+      profileLoading.hidden = false;
+      const requestId = ++profileRequestId;
+      let data;
+      try {
+        const res = await fetch(`profile/${pid}`);
+        if (!res.ok) throw new Error(`profile -> ${res.status}`);
+        data = await res.json();
+      } catch {
+        if (requestId !== profileRequestId) return; // sheet closed or a newer profile opened
+        profileLoading.hidden = true;
+        profileError.hidden = false;
+        return;
+      }
+      if (requestId !== profileRequestId) return;
+      profileLoading.hidden = true;
+      profileName.textContent = data.name || "Anonymous";
+      profileMeta.textContent = `★ ${data.karma} · ${data.items.length} scene${data.items.length === 1 ? "" : "s"}`;
+      if (data.items.length === 0) {
+        profileEmpty.hidden = false;
+        return;
+      }
+      for (const item of data.items) profileGrid.appendChild(renderProfileTile(item));
+    }
+    profileClose.addEventListener("click", closeProfile);
+    profileSheet.addEventListener("click", (event) => {
+      if (event.target === profileSheet) closeProfile(); // backdrop
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !profileSheet.hidden) closeProfile();
+    });
+    // ONE delegated handler on every container a viewer's name can appear in.
+    function onNameActivate(event) {
+      const target = event.target.closest("[data-pid]");
+      const pid = target?.dataset.pid;
+      if (!pid) return;
+      event.preventDefault();
+      event.stopPropagation(); // never a tap-reaction or a like on the video underneath
+      openProfile(pid, target);
+    }
+    function onNameKeydown(event) {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      onNameActivate(event);
+    }
+    for (const container of [railQueue, paneQueue, paneChat, paneRank, stageCaptionName]) {
+      container.addEventListener("click", onNameActivate);
+      container.addEventListener("keydown", onNameKeydown);
+    }
+    // profile:end
 
     // adbanner:start — on-screen AD slate, up for as long as the clip the channel's voice is
     // reading. Self-contained; renderStatus calls renderAdBanner once, right after the pitch
@@ -3167,6 +3417,7 @@
       stageCaption.hidden = !now;
       if (!now) return;
       setText(stageCaptionName, now.name);
+      stageCaptionName.dataset.pid = now.pid || ""; // profile:start/end (see delegated handler)
       setText(stageCaptionKarmaN, String(now.karma));
       setText(stageCaptionText, now.text);
       if (stageCaptionText.title !== now.text) stageCaptionText.title = now.text;
