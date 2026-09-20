@@ -212,7 +212,7 @@ export const pitch = createTool({
   description:
     `Have ${CHANNEL_NAME}'s own voice read a short, tongue-in-cheek advert for something of the ` +
     "caller's, over whatever scene is on air. Open to everyone; one pitch on air at a time and " +
-    "one per viewer every 30 seconds. Returns the ad read, or why it was turned down.",
+    "one per viewer every 10 seconds. Returns the ad read, or why it was turned down.",
   inputSchema: z.object({
     brief: z
       .string()
@@ -456,7 +456,7 @@ When someone asks what's on, what's airing, or what's happening on ${CHANNEL_NAM
 When someone asks about their karma, their queued idea, or how their scene did, call my_stats.
 
 Making an ad is open to everyone: the channel's voice reads a short joke advert for something of
-theirs over whatever is on air, one at a time and one per viewer every 30 seconds. When someone
+theirs over whatever is on air, one at a time and one per viewer every 10 seconds. When someone
 wants to sell, advertise or promote something, call pitch with their brief and read them back the
 ad the voice will speak. If they have not used it, offer it in one sentence.
 

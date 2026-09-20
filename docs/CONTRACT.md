@@ -14,7 +14,7 @@ Custom routes cannot live under `/api` (Mastra reserves it).
 | `POST /say` | `{ uid, name, text, source?: "web"｜"voice", kind?: "new"｜"amend" }` | `200 {ok:true,id}` · `422 {ok:false,reason}` moderated out · `409 {ok:false,reason}` refused by the channel (see below) · `503` moderation down · `400` invalid |
 | `POST /say` | `{ uid, name, text, source?: "web"｜"voice" }` | `200 {ok:true,id}` · `422 {ok:false,reason}` moderated out · `409 {ok:false,reason}` already queued · `503` moderation down · `400` invalid |
 | `POST /say-voice` | `multipart/form-data`: `uid`, `name`, `audio` (blob) | same codes as `/say` (with `source: "voice"`), plus `415 {ok:false,reason}` bad audio type/size and `422 {ok:false,reason,heard}` when nothing was heard; every response from this route that has a transcript includes `heard: "<transcript>"` |
-| `POST /pitch` | `{ uid, name, brief }` | `200 {ok:true,line}` — `line` is the ad read the voice will speak, open to any viewer · `429` per-user cooldown (30 s) or rate limit · `409` another pitch has the slot · `422` moderated out · `503` moderation, writing or TTS down · `400` invalid. Every failure carries `{ok:false,code,reason}`. |
+| `POST /pitch` | `{ uid, name, brief }` | `200 {ok:true,line}` — `line` is the ad read the voice will speak, open to any viewer · `429` per-user cooldown (10 s) or rate limit · `409` another pitch has the slot · `422` moderated out · `503` moderation, writing or TTS down · `400` invalid. Every failure carries `{ok:false,code,reason}`. |
 | `POST /like` | `{ uid }` | `{ ok: boolean }` — false if already liked, own scene, or nothing on air |
 | `GET /viewer-token` | — | `{ applicationId, sessionId, token }` subscribe-only Vonage token |
 | `GET /announcer/:clipId` | — | `audio/mpeg`, one spoken clip: the ad read for a steer whose idea asked for an ad, or a pitch's ad read; 404 once forgotten |
@@ -26,10 +26,12 @@ Custom routes cannot live under `/api` (Mastra reserves it).
 
 `uid`: 8–64 chars of `[A-Za-z0-9_-]`, random, generated client-side, kept in `localStorage`.
 `name`: 1–24 chars, moderated together with the idea. `text`: 1–280 chars.
-`brief`: 1–140 chars, moderated with the name against a separate pitch rubric. A real company,
-brand, product, price, discount or offer is allowed (a sponsor, the viewer's own startup); real
-people, health/financial/legal/safety claims, age-restricted or illegal goods, scams, and contact
-details are refused.
+`brief`: 1–140 chars, moderated with the name against a separate pitch rubric. Almost anything is
+allowed, played for a joke: a real company, brand, product, price, discount or offer (a sponsor,
+the viewer's own startup), a real person named playfully, and obviously-a-joke health/money/legal
+claims. Refused: sexual content, hateful or harassing content, a minor in an unsafe or sexualised
+way, illegal drugs or weapons, an actual scam aimed at the listener, self-harm, someone's private
+contact details, and prompt-injection attempts.
 
 `kind` (default `"new"`): `"new"` replaces the scene on air, same as before. `"amend"` is "Yes, and" —
 it changes ONE thing about the scene already on air while everything else keeps running, instead of
