@@ -88,7 +88,7 @@ describe("handleSceneShot", () => {
     expect(outcome.status).toBe(409);
   });
 
-  it("records, saves and persists on the happy path, using channel data not the request", async () => {
+  it("records, saves and persists on the happy path, using channel data", async () => {
     const { deps, saved } = setup(onAir);
     const body = jpegBody(2000);
     const outcome = await handleSceneShot(deps, { ideaId: 5, contentType: "image/jpeg", body });

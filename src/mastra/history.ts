@@ -1,7 +1,7 @@
 /**
  * Per-viewer scene history: which scenes each viewer has put on air. Pure and synchronous, clock
- * injected — same style as Channel (channel.ts) and Ticker (ticker.ts). No I/O here; history-io.ts
- * persists it to disk beside this so a restart survives.
+ * injected — same style as Channel (channel.ts) and Ticker (ticker.ts). No I/O here;
+ * history-io.ts persists it to disk beside this so a restart survives.
  *
  * ponytail: stills only, one per scene (broadcaster.ts captures a JPEG, not video) — see the
  * `ponytail:` note at the capture site in public/broadcaster.html for the upgrade path.

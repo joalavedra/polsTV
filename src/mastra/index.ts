@@ -468,7 +468,7 @@ export const mastra = new Mastra({
           if (!bytes) return c.notFound();
           return c.body(new Uint8Array(bytes), 200, {
             "content-type": "image/jpeg",
-            // Not immutable: an amend re-uses its scene's ideaId, so a later shot replaces this one.
+            // Not immutable: an amend re-uses its ideaId, so a later shot replaces this one.
             "cache-control": "public, max-age=60",
           });
         },

@@ -346,7 +346,11 @@ export class Channel {
           pid: pidOf(idea.uid),
         })),
       // Karma is read at status time so the stars in chat move as likes come in.
-      chat: this.chat.map(({ uid, ...line }) => ({ ...line, karma: this.karmaOf(uid), pid: pidOf(uid) })),
+      chat: this.chat.map(({ uid, ...line }) => ({
+        ...line,
+        karma: this.karmaOf(uid),
+        pid: pidOf(uid),
+      })),
       rank: [...this.players.entries()]
         .filter(([, player]) => player.karma > 0)
         .sort((a, b) => b[1].karma - a[1].karma)

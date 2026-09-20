@@ -60,7 +60,7 @@ export async function readShot(ideaId: number): Promise<Buffer | undefined> {
   return await readFile(shotPath(ideaId)).catch(() => undefined);
 }
 
-/** Evicted entries delete their jpg. Missing file (never uploaded, or already gone) is not an error. */
+/** Evicted entries delete their jpg. A missing file (never uploaded, or already gone) is fine. */
 export async function deleteShot(ideaId: number): Promise<void> {
   await rm(shotPath(ideaId), { force: true });
 }
