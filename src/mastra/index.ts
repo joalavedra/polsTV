@@ -7,7 +7,8 @@ import { LibSQLStore } from "@mastra/libsql";
 import { Mastra } from "@mastra/core/mastra";
 import { registerApiRoute } from "@mastra/core/server";
 import { z } from "zod";
-import { clip, synthesise } from "./announcer";
+import { adBanner } from "./ad-banner";
+import { clip, clipLine, synthesise } from "./announcer";
 import type { Idea } from "./channel";
 import { channel } from "./channel";
 import { handleEval, type EvalDeps } from "./eval";
@@ -97,6 +98,8 @@ const pitchResultBody = z.object({
   played: z.boolean(),
   reason: z.string().max(200).optional(),
 });
+// Same charset the ids synthesise() hands out use: "steer-<ideaId>" or "pitch-<id>".
+const clipStartedBody = z.object({ clipId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/) });
 
 // Which HTTP status each refusal from pitch.ts is worth. Everything else is a 200.
 const pitchStatus = {
@@ -328,7 +331,7 @@ export const mastra = new Mastra({
           const viewer = uid.safeParse(c.req.query("uid"));
           if (viewer.success) channel.sawViewer(viewer.data);
           sweepPitches();
-          return c.json({ ...channel.status(), pitch: pitchSlot.status() ?? null });
+          return c.json({ ...channel.status(), pitch: pitchSlot.status() ?? null, ad: adBanner.current() });
         },
       }),
 
@@ -599,6 +602,23 @@ export const mastra = new Mastra({
             log.warn("pitch clip did not play:", body.data.reason, { pitchId: body.data.pitchId });
           }
           pitchSlot.release(body.data.pitchId);
+          return c.json({ ok: true });
+        },
+      }),
+
+      // The broadcaster calls this the moment a clip actually starts playing, so the on-screen AD
+      // banner (ad-banner.ts) lands in step with the voice instead of the 17 s scheduling delay
+      // upstream of it.
+      registerApiRoute("/b/:secret/clip-started", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          if (!isBroadcaster(c.req.param("secret"))) return c.notFound();
+          const body = clipStartedBody.safeParse(await c.req.json().catch(() => null));
+          if (!body.success) return c.json({ ok: false }, 400);
+          const line = clipLine(body.data.clipId);
+          if (line === undefined) return c.notFound();
+          adBanner.start(line);
           return c.json({ ok: true });
         },
       }),
