@@ -1495,8 +1495,15 @@
          corner unless given a stacking order of its own (.top-center/.top-right already had one). */
       z-index: 10;
     }
+    /* --logo-w: the logo's rendered width (36px tall, 16:9 => 64px), so the LIVE pill's offset
+       derives from it instead of a magic 68px. If the logo image fails to load, .logo-broken
+       below (set by the img's onerror) zeroes this out and the pill falls back to the same left
+       edge instead of floating in an empty gap. */
+    :root { --logo-w: 64px; }
     .top-logo { display: block; height: 36px; width: auto; border-radius: 8px; }
-    .top-center { top: 14px; left: 68px; max-width: 40vw; }
+    .top-center { top: 14px; left: calc(20px + var(--logo-w) + 10px); max-width: 40vw; }
+    body.logo-broken .top-left { display: none; }
+    body.logo-broken .top-center { left: 20px; }
     #live-sep, #live-viewer-count { display: none; }
     .top-right { top: 14px; right: 20px; }
     #viewer-pill { display: inline-flex; }
@@ -1723,7 +1730,8 @@
     <div id="heart-layer"></div>
 
     <div class="top-left chrome">
-      <img class="top-logo" src="assets/logo.jpg" alt="polsTV" width="120" height="68">
+      <img class="top-logo" src="assets/logo.jpg" alt="polsTV" width="120" height="68"
+        onerror="document.body.classList.add('logo-broken')">
     </div>
 
     <div class="top-center chrome">
