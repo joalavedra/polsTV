@@ -116,6 +116,7 @@
     lastLatencyMs: undefined,
     steerSentAt: new Map(), // steerId -> Date.now() when we acted on it
     adClipTimers: new Map(), // steerId -> pending announcer setTimeout, cleared on fire/cancel
+    sceneShotTimers: new Map(), // steerId -> pending scene-shot setTimeout, cleared on fire/cancel
     steerPollBusy: false,
     idlePollBusy: false,
     opens: [], // timestamps of session opens, for the 3-per-10-min guard
@@ -284,6 +285,36 @@
     return new Promise((resolve) => els.stage.toBlob(resolve, "image/jpeg", 0.85));
   }
 
+  // ---- HISTORY: one small still per scene, not the full-size rotation frame above -----------
+  // ponytail: a still, not motion — the channel is one continuous stream, so "their scene" is one
+  // JPEG plus the idea text. Upgrade path: a 6s MediaRecorder webm of the canvas stream posted to
+  // the same route; ceiling stays a still until that lands.
+
+  // Created once and reused: never re-created per shot.
+  const sceneShotCanvas = document.createElement("canvas");
+  sceneShotCanvas.width = 480;
+  sceneShotCanvas.height = 270;
+  const sceneShotCtx = sceneShotCanvas.getContext("2d");
+
+  function grabSceneShotBlob() {
+    sceneShotCtx.drawImage(els.stage, 0, 0, sceneShotCanvas.width, sceneShotCanvas.height);
+    return new Promise((resolve) => sceneShotCanvas.toBlob(resolve, "image/jpeg", 0.72));
+  }
+
+  /** Fire-and-forget: a failed upload must never affect steering or playback. */
+  async function uploadSceneShot(ideaId, blob) {
+    try {
+      const res = await fetch(`b/${state.secret}/scene-shot?ideaId=${ideaId}`, {
+        method: "POST",
+        headers: { "Content-Type": "image/jpeg" },
+        body: blob,
+      });
+      if (!res.ok) log("scene_shot_failed", { ideaId, status: res.status });
+    } catch (e) {
+      log("scene_shot_failed", { ideaId, message: String(e) });
+    }
+  }
+
   // ---- audio graph: always exists once started, Director's track feeds in via a gain node ---
 
   function setupAudioGraph() {
@@ -401,6 +432,34 @@
     clearTimeout(timer);
     state.adClipTimers.delete(steerId);
     log("clip_delay_cancelled", { key: `announcer-${steerId}`, reason });
+  }
+
+  // A steer's picture reaches the canvas ~AD_CLIP_DELAY_MS after it is sent, and the next scene
+  // can land STEER_GAP_MS (10s, channel.ts) later, so capture just before that: comfortably after
+  // the scene is on screen, comfortably before the next one might replace it.
+  // ponytail: fixed delay like AD_CLIP_DELAY_MS above, same calibration knob.
+  const SCENE_SHOT_DELAY_MS = 21_000;
+
+  /** Schedule one scene's still, keyed by steerId like the announcer timer above. Skipped in
+   * ?director=off: the ident card is not a scene worth keeping in anyone's history. */
+  function scheduleSceneShot(steerId, ideaId) {
+    if (state.directorOff) return;
+    const timer = setTimeout(() => {
+      state.sceneShotTimers.delete(steerId);
+      grabSceneShotBlob().then((blob) => {
+        if (blob) uploadSceneShot(ideaId, blob);
+      });
+    }, SCENE_SHOT_DELAY_MS);
+    state.sceneShotTimers.set(steerId, timer);
+  }
+
+  /** Drop a still-pending scene shot: its steer will never put its scene on screen. */
+  function cancelSceneShotTimer(steerId, reason) {
+    const timer = state.sceneShotTimers.get(steerId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    state.sceneShotTimers.delete(steerId);
+    log("scene_shot_cancelled", { steerId, reason });
   }
 
   /**
@@ -553,6 +612,8 @@
     // Every scene still waiting on its 17s delay dies with this session: it will never reach
     // the screen, so its ad clip must not play over whatever comes next (ident card or error).
     for (const steerId of state.adClipTimers.keys()) cancelAnnouncerTimer(steerId, "teardown");
+    // Same reasoning for a still-pending scene shot: that scene never reached the screen either.
+    for (const steerId of state.sceneShotTimers.keys()) cancelSceneShotTimer(steerId, "teardown");
     if (d.session) {
       try {
         d.session.close();
@@ -586,7 +647,10 @@
   }
 
   async function reportSteerResult(steerId, applied, reason) {
-    if (!applied) cancelAnnouncerTimer(steerId, reason ?? "not_applied");
+    if (!applied) {
+      cancelAnnouncerTimer(steerId, reason ?? "not_applied");
+      cancelSceneShotTimer(steerId, reason ?? "not_applied");
+    }
     const sentAt = state.steerSentAt.get(steerId);
     if (applied && sentAt) state.lastLatencyMs = Date.now() - sentAt;
     state.steerSentAt.delete(steerId);
@@ -833,6 +897,7 @@
     state.steerSentAt.set(steer.steerId, Date.now());
     state.idle.queueEmptySince = null;
     scheduleAnnouncerClip(steer.steerId, steer.announcerUrl);
+    scheduleSceneShot(steer.steerId, steer.ideaId);
     if (state.directorOff) return resolveIdentSteer(steer);
     if (state.director.session) return sendSteer(steer.prompt, steer.steerId);
     return openDirectorSession(steer.prompt, steer.steerId);
