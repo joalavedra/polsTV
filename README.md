@@ -63,20 +63,20 @@ benefit, and a tagline, opening "A word from Timba." SLNG's `slng/fish/tts:s2.1-
 `[excited]` tone marker in the text, a silent control tag it does not read aloud (verified live by
 transcribing a marked clip back). The write runs in parallel with the steer-writing call,
 time-boxed at 8 seconds, and the steer simply airs silent — no clip at all — on a non-ad idea, a
-timeout, a write failure, an empty read, or a TTS failure. The written line is capped at 25 words in
+timeout, a write failure, an empty read, or a TTS failure. The written line is capped at 20 words in
 code, since the clip has to finish before the next steer arrives.
 
 The same voice also reads the pitch, open to any viewer: they send a brief of up to 140 characters
 ("sell my lemonade stand, aggressively") and the channel reads the same kind of ad for it over
 whatever is on air, opening "A word from Timba." The brief and the nickname
 go through their own moderation rubric first — no real brands, people, prices, claims or URLs — and
-the written read is capped at the same 25 words with anything URL-like stripped out. One pitch is
+the written read is capped at the same 20 words with anything URL-like stripped out. One pitch is
 on air or pending at a time, one per viewer every 30 seconds, and a pitch nobody collects within
 60 seconds is dropped and the viewer told. The broadcaster plays spoken clips strictly one after
 another, so a pitch never talks over a steer's ad read.
 
 Every ad read is hard-stopped at 10 seconds (`AD_MAX_MS`, `broadcaster.html`), cutting a long read
-rather than letting it run — the 25-word cap keeps this rare. The moment a clip actually starts
+rather than letting it run — the 20-word cap keeps this rare. The moment a clip actually starts
 playing, the broadcaster reports it to the server (`POST /b/:secret/clip-started`), which puts an
 "AD" banner on screen over the picture (`ad-banner.ts`, `index.html`) for the same 10 seconds, so
 the voice and the banner always go quiet together.

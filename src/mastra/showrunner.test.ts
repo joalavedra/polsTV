@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  capChars,
   capWords,
   isAdIdea,
+  MAX_AD_READ_CHARS,
   MAX_AD_READ_WORDS,
   normalizeForModeration,
   pitchWriter,
@@ -92,15 +94,44 @@ describe("capWords", () => {
 
   it("keeps the tagline sentence for a realistic ad, dropping trailing fluff after it", () => {
     const ad =
-      "Bored yet? Croak Crunch is hand rolled by frogs at midnight. " +
-      "One bite and the whole pond hears about it. " +
+      "Bored yet? Croak Crunch rolls snacks by frog at midnight. " +
+      "One bite stuns the pond. " +
       "Croak Crunch: snacking, ribbited. " +
       "Tell every lily pad tonight";
     expect(capWords(ad, MAX_AD_READ_WORDS)).toBe(
-      "Bored yet? Croak Crunch is hand rolled by frogs at midnight. " +
-        "One bite and the whole pond hears about it. " +
+      "Bored yet? Croak Crunch rolls snacks by frog at midnight. " +
+        "One bite stuns the pond. " +
         "Croak Crunch: snacking, ribbited.",
     );
+  });
+});
+
+describe("capChars", () => {
+  it("leaves a line inside the limit untouched", () => {
+    expect(capChars("one two three", 20)).toBe("one two three");
+  });
+
+  it("drops trailing sentences while the body is over budget, without cutting mid-sentence", () => {
+    const body = "Overwhelmed drawers everywhere. Cabinet Wrangler organizes closets by moonlight.";
+    expect(capChars(body, 40)).toBe("Overwhelmed drawers everywhere.");
+  });
+
+  it("falls back to capWords's word-boundary cut when only one sentence remains", () => {
+    const oneSentence = "Overwhelmed drawers vanish instantly forever guaranteed absolutely completely";
+    expect(capChars(oneSentence, 30)).toBe(capWords(oneSentence, 3));
+  });
+
+  it("a 24-word, 170-character four-sentence read comes back within both limits and still ends on a complete sentence", () => {
+    const read =
+      "Overwhelmed yet? Cabinet Wrangler tames every messy drawers while you sleep soundly. " +
+      "One use and clutter vanishes from your kitchens. " +
+      "Cabinet Wrangler: drawers, wrangled.";
+    expect(read.split(" ").filter(Boolean).length).toBe(24);
+    expect(read.length).toBe(170);
+    const capped = capChars(capWords(read, MAX_AD_READ_WORDS), MAX_AD_READ_CHARS);
+    expect(capped.split(" ").filter(Boolean).length).toBeLessThanOrEqual(MAX_AD_READ_WORDS);
+    expect(capped.length).toBeLessThanOrEqual(MAX_AD_READ_CHARS);
+    expect(capped).toMatch(/[.!?]$/);
   });
 });
 
