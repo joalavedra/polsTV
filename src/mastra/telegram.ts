@@ -13,7 +13,7 @@ import { z } from "zod";
 import type { AddResult, Idea, IdeaKind, Scene, Status } from "./channel";
 import { channel, STEER_GAP_MS } from "./channel";
 import type { PitchResult } from "./pitch";
-import { livePitchDeps, PITCH_MIN_KARMA, pitchSlot, submitPitch } from "./pitch";
+import { livePitchDeps, pitchSlot, submitPitch } from "./pitch";
 import type { ModerationOutcome } from "./showrunner";
 import { MAX_IDEA_CHARS, MAX_PITCH_BRIEF_CHARS, moderate } from "./showrunner";
 import type { TokenUsage } from "./spend";
@@ -29,13 +29,21 @@ import { ticker } from "./ticker";
 import { transcribe } from "./transcriber";
 import type { VoiceIntakeDeps } from "./voice-intake";
 import { extractTelegramVoice, handleVoiceMessage } from "./voice-intake";
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 
 const TELEGRAM_PREFIX = "telegram:";
-const DEFAULT_PUBLIC_URL = "http://localhost:4111";
 const CHANNEL_NAME = "polsTV";
 
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+/** The public address the bot links to in DMs. No loopback fallback: unset breaks every DM link
+ * silently, so this fails fast instead. Read lazily (only when called), never at import time. */
 export function watchLink(): string {
-  return process.env["PUBLIC_URL"] || DEFAULT_PUBLIC_URL;
+  const value = process.env["PUBLIC_URL"];
+  if (!value) {
+    throw new Error("PUBLIC_URL is missing. Add it to .env (see .env.example).");
+  }
+  return value;
 }
 
 /** Fails fast: a Telegram tool must never trust a uid the model could have supplied itself. */
@@ -118,7 +126,8 @@ export async function submitIdeaLogic(
   try {
     outcome = await deps.moderate(text, name);
   } catch (error) {
-    console.error(`moderation failed for telegram idea from ${uid}:`, error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error(`moderation failed for telegram idea from ${uid}:`, error, { uid });
     return { queued: false, reason: "Moderation is unavailable right now, try again in a bit." };
   }
   const { verdict, usage } = outcome;
@@ -190,23 +199,20 @@ export interface PitchToolResult {
   /** The ad read the channel's voice will speak, so the caller can see what they bought. */
   line?: string;
   reason?: string;
-  karmaNeeded?: number;
 }
 
-/** Shapes one submitPitch outcome for the agent. The karma gate lives in pitch.ts, not here. */
-export function pitchToolResult(result: PitchResult, karma: number): PitchToolResult {
+/** Shapes one submitPitch outcome for the agent. */
+export function pitchToolResult(result: PitchResult): PitchToolResult {
   if (result.ok) return { onAir: true, line: result.line };
-  if (result.code !== "karma") return { onAir: false, reason: result.reason };
-  return { onAir: false, reason: result.reason, karmaNeeded: PITCH_MIN_KARMA - karma };
+  return { onAir: false, reason: result.reason };
 }
 
 export const pitch = createTool({
   id: "pitch",
   description:
     `Have ${CHANNEL_NAME}'s own voice read a short, tongue-in-cheek advert for something of the ` +
-    `caller's, over whatever scene is on air. Needs ${PITCH_MIN_KARMA} karma; one pitch on air ` +
-    "at a time and one per viewer every three minutes. Returns the ad read, or why it was " +
-    "turned down.",
+    "caller's, over whatever scene is on air. Open to everyone; one pitch on air at a time and " +
+    "one per viewer every three minutes. Returns the ad read, or why it was turned down.",
   inputSchema: z.object({
     brief: z
       .string()
@@ -219,13 +225,12 @@ export const pitch = createTool({
     onAir: z.boolean(),
     line: z.string().optional(),
     reason: z.string().optional(),
-    karmaNeeded: z.number().int().optional(),
   }),
   execute: async ({ brief }, context) => {
     const uid = requireTelegramUid(context.agent?.resourceId);
     const name = displayName(context.requestContext.get("channel"));
     const result = await submitPitch(pitchSlot, livePitchDeps, { uid, name, brief });
-    return pitchToolResult(result, channel.karmaOf(uid));
+    return pitchToolResult(result);
   },
 });
 
@@ -281,15 +286,12 @@ export interface MyStatsResult {
   queued: { text: string; position: number } | null;
   onAirNow: boolean;
   recentScenes: { text: string; likes: number }[];
-  /** Whether this caller has the karma to instruct the channel's voice (pitch.ts). */
-  pitchUnlocked: boolean;
 }
 
 export function myStatsLogic(uid: string, deps: MyStatsDeps): MyStatsResult {
   const idea = deps.myIdea(uid);
   return {
     karma: deps.karmaOf(uid),
-    pitchUnlocked: deps.karmaOf(uid) >= PITCH_MIN_KARMA,
     queued: idea ? { text: idea.text, position: deps.queuePosition(uid) ?? 1 } : null,
     onAirNow: deps.isOnAir(uid),
     recentScenes: deps.recentScenes(uid).map((scene) => ({ text: scene.text, likes: scene.likes })),
@@ -307,7 +309,6 @@ export const myStats = createTool({
     queued: z.object({ text: z.string(), position: z.number().int() }).nullable(),
     onAirNow: z.boolean(),
     recentScenes: z.array(z.object({ text: z.string(), likes: z.number().int() })),
-    pitchUnlocked: z.boolean(),
   }),
   execute: async (_input, context) => {
     const uid = requireTelegramUid(context.agent?.resourceId);
@@ -387,8 +388,21 @@ export async function routeDirectMessage<
 ): Promise<void> {
   const photoIntake = telegramPhotoIntake(message);
   if (photoIntake) {
-    const result = await handlePhotoSubmission(deps.photo, photoIntake);
-    await thread.post(result.reply);
+    try {
+      // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+      const result = await handlePhotoSubmission(deps.photo, photoIntake);
+      await thread.post(result.reply);
+    } catch (error) {
+      log.error(`telegram photo pipeline failed for ${message.author.userName}:`, error);
+      try {
+        await thread.post("Something went wrong with that photo. Try again.");
+      } catch (postError) {
+        log.error(
+          `failed to notify ${message.author.userName} after photo pipeline error:`,
+          postError,
+        );
+      }
+    }
     return;
   }
 
@@ -441,12 +455,10 @@ scene that's already on screen right now, like adding a hat or making it snow, w
 When someone asks what's on, what's airing, or what's happening on ${CHANNEL_NAME}, call whats_on.
 When someone asks about their karma, their queued idea, or how their scene did, call my_stats.
 
-At ${PITCH_MIN_KARMA} karma a viewer unlocks the pitch: the channel's voice reads a short joke
-advert for something of theirs over whatever is on air. When someone wants to sell, advertise or
-promote something, call pitch with their brief and read them back the ad the voice will speak. When
-my_stats comes back with pitchUnlocked and they have not used it, offer it in one sentence. When
-they ask about it below ${PITCH_MIN_KARMA} karma, say how many likes they still need and that
-likes come from other people liking the scenes they prompted.
+The pitch is open to everyone: the channel's voice reads a short joke advert for something of
+theirs over whatever is on air, one at a time and one per viewer every three minutes. When someone
+wants to sell, advertise or promote something, call pitch with their brief and read them back the
+ad the voice will speak. If they have not used it, offer it in one sentence.
 
 Some messages arrive as speech, transcribed to text before you see them, so treat them exactly like
 typed ones. Keep every reply to 1-3 short sentences, written for a phone screen. If someone sends
@@ -488,12 +500,16 @@ export async function sendDM(uid: string, text: string, sender: DMSender): Promi
     await sender.native(chatId, text);
     return;
   } catch (nativeError) {
-    console.warn(`telegram DM to ${uid}: native route failed, falling back to fetch`, nativeError);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.warn(`telegram DM to ${uid}: native route failed, falling back to fetch`, nativeError, {
+      uid,
+    });
   }
   try {
     await sender.fallback(chatId, text);
   } catch (fallbackError) {
-    console.error(`telegram DM to ${uid}: both routes failed, giving up`, fallbackError);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error(`telegram DM to ${uid}: both routes failed, giving up`, fallbackError, { uid });
   }
 }
 
@@ -576,6 +592,7 @@ export async function notifySceneChange(change: SceneChange): Promise<void> {
     const jobs = sceneChangeMessages(change, watchLink());
     await Promise.all(jobs.map((job) => sendTelegramDM(job.uid, job.text)));
   } catch (error) {
-    console.error("notifySceneChange failed unexpectedly:", error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error("notifySceneChange failed unexpectedly:", error);
   }
 }

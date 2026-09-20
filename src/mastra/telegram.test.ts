@@ -1,7 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AddResult, Scene } from "./channel";
 import { STEER_GAP_MS } from "./channel";
-import { PITCH_MIN_KARMA } from "./pitch";
 import {
   displayName,
   myStatsLogic,
@@ -12,6 +11,7 @@ import {
   sceneChangeMessages,
   sendDM,
   submitIdeaLogic,
+  watchLink,
   whatsOnLogic,
 } from "./telegram";
 import type {
@@ -20,6 +20,7 @@ import type {
   DMSender,
   MyStatsDeps,
   SubmitIdeaDeps,
+  SubmitIdeaResult,
 } from "./telegram";
 import { TICKER_ACCEPTED_REPLY } from "./ticker-intake";
 import type { PhotoIntakeDeps } from "./ticker-intake";
@@ -110,7 +111,15 @@ describe("submitIdeaLogic", () => {
   it("reports the channel's reason when the user already has a queued idea", async () => {
     const alreadyQueued = "You already have an idea in the queue. Wait until it airs.";
     const d = deps({ addIdea: vi.fn((): AddResult => ({ ok: false, reason: alreadyQueued })) });
-    const result = await submitIdeaLogic(d, "telegram:1", "Ana", "a second idea");
+    let result: SubmitIdeaResult;
+    try {
+      // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+      result = await submitIdeaLogic(d, "telegram:1", "Ana", "a second idea");
+    } catch (error) {
+      throw new Error("submitIdeaLogic rejected; it must resolve to an outcome here", {
+        cause: error,
+      });
+    }
     expect(result).toEqual({ queued: false, reason: alreadyQueued });
     expect(d.recordModeration).toHaveBeenCalledWith("rejected", "Ana", "a second idea", ZERO_USAGE);
   });
@@ -150,6 +159,22 @@ describe("displayName", () => {
   it("falls back when there is no channel context or an empty name", () => {
     expect(displayName(undefined)).toBe("a viewer");
     expect(displayName({ userName: "   " })).toBe("a viewer");
+  });
+});
+
+describe("watchLink", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("fails fast when PUBLIC_URL is unset", () => {
+    vi.stubEnv("PUBLIC_URL", "");
+    expect(() => watchLink()).toThrow(/PUBLIC_URL/);
+  });
+
+  it("returns PUBLIC_URL as-is when set", () => {
+    vi.stubEnv("PUBLIC_URL", "https://example.test/");
+    expect(watchLink()).toBe("https://example.test/");
   });
 });
 
@@ -208,14 +233,7 @@ describe("myStatsLogic", () => {
       queued: null,
       onAirNow: false,
       recentScenes: [],
-      pitchUnlocked: true,
     });
-  });
-
-  it("says the pitch is locked below the karma gate and unlocked at it", () => {
-    const at = (karma: number) => myStatsLogic("telegram:1", deps({ karmaOf: () => karma }));
-    expect(at(PITCH_MIN_KARMA - 1).pitchUnlocked).toBe(false);
-    expect(at(PITCH_MIN_KARMA).pitchUnlocked).toBe(true);
   });
 
   it("reports the caller's queued idea with its position", () => {
@@ -346,19 +364,14 @@ describe("sendDM", () => {
 
 describe("pitchToolResult", () => {
   it("hands the agent the ad read the voice will speak", () => {
-    expect(pitchToolResult({ ok: true, line: "A word from Ana. Buy nothing." }, 4)).toEqual({
+    expect(pitchToolResult({ ok: true, line: "A word from Ana. Buy nothing." })).toEqual({
       onAir: true,
       line: "A word from Ana. Buy nothing.",
     });
   });
 
-  it("says how much karma is still missing when the gate refuses", () => {
-    const result = pitchToolResult({ ok: false, code: "karma", reason: "needs 3" }, 1);
-    expect(result).toEqual({ onAir: false, reason: "needs 3", karmaNeeded: PITCH_MIN_KARMA - 1 });
-  });
-
-  it("passes any other refusal straight through without a karma hint", () => {
-    const result = pitchToolResult({ ok: false, code: "busy", reason: "Bob has the slot" }, 9);
+  it("passes a refusal straight through", () => {
+    const result = pitchToolResult({ ok: false, code: "busy", reason: "Bob has the slot" });
     expect(result).toEqual({ onAir: false, reason: "Bob has the slot" });
   });
 });
@@ -542,7 +555,14 @@ describe("routeDirectMessage", () => {
     const d = deps({
       voice: voiceDeps({ downloadAudio: vi.fn(async () => Promise.reject(new Error("no file"))) }),
     });
-    await routeDirectMessage(d, t, msg, defaultHandler);
+    try {
+      // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+      await routeDirectMessage(d, t, msg, defaultHandler);
+    } catch (error) {
+      throw new Error("routeDirectMessage rejected; it must resolve to an outcome here", {
+        cause: error,
+      });
+    }
     expect(defaultHandler).not.toHaveBeenCalled();
     expect(d.voice.transcribe).not.toHaveBeenCalled();
     consoleError.mockRestore();

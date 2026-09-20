@@ -57,7 +57,7 @@ viewer subscribes to.
 
 The channel's voice only speaks for an ad. When a viewer's idea reads as a request to create or
 broadcast an ad — `isAdIdea()` in `showrunner.ts`, a keyword check covering English, Catalan and
-Spanish — the same ad-writing agent behind the karma-gated pitch (below) writes a high-energy
+Spanish — the same ad-writing agent behind the pitch (below) writes a high-energy
 infomercial read for it: a hook, the invented product named and revealed, one absurdly specific
 benefit, and a tagline, opening "A word from Timba." SLNG's `slng/fish/tts:s2.1-pro` gets a leading
 `[excited]` tone marker in the text, a silent control tag it does not read aloud (verified live by
@@ -66,14 +66,20 @@ time-boxed at 8 seconds, and the steer simply airs silent — no clip at all —
 timeout, a write failure, an empty read, or a TTS failure. The written line is capped at 25 words in
 code, since the clip has to finish before the next steer arrives.
 
-The same voice is also the karma reward. At 3 karma a viewer unlocks the pitch: they send a brief
-of up to 140 characters ("sell my lemonade stand, aggressively") and the channel reads the same
-kind of ad for it over whatever is on air, opening "A word from Timba." The brief and the nickname
+The same voice also reads the pitch, open to any viewer: they send a brief of up to 140 characters
+("sell my lemonade stand, aggressively") and the channel reads the same kind of ad for it over
+whatever is on air, opening "A word from Timba." The brief and the nickname
 go through their own moderation rubric first — no real brands, people, prices, claims or URLs — and
 the written read is capped at the same 25 words with anything URL-like stripped out. One pitch is
 on air or pending at a time, one per viewer every three minutes, and a pitch nobody collects within
 60 seconds is dropped and the viewer told. The broadcaster plays spoken clips strictly one after
 another, so a pitch never talks over a steer's ad read.
+
+Every ad read is hard-stopped at 10 seconds (`AD_MAX_MS`, `broadcaster.html`), cutting a long read
+rather than letting it run — the 25-word cap keeps this rare. The moment a clip actually starts
+playing, the broadcaster reports it to the server (`POST /b/:secret/clip-started`), which puts an
+"AD" banner on screen over the picture (`ad-banner.ts`, `index.html`) for the same 10 seconds, so
+the voice and the banner always go quiet together.
 
 ### Why Director, not a text-to-video call
 
@@ -125,15 +131,15 @@ for the moderator.
 
 ### The ticker
 
-A TV-style crawl scrolls along the bottom of the viewer page (`public/index.html`), fixed to the
+A bar of photo slots sits along the bottom of the viewer page (`public/index.html`), fixed to the
 viewport edge, outside the video — it never touches the broadcast picture itself, so it's absent
 from the published stream and from recordings. Message
 [@timesquarescreenbot](https://t.me/timesquarescreenbot) a photo, optionally with a caption, and —
-once it clears moderation — it scrolls in the ticker for 1 minute. The bot picks the smallest
+once it clears moderation — it takes the next slot for 5 seconds. The bot picks the smallest
 Telegram-provided size whose shorter side is at least 240px (never the original), refuses anything
 over 1 MB or not JPEG/PNG/WEBP by magic bytes, and moderates the image on a Nebius vision model
 before it is ever stored; a rejection or a moderation error/timeout both refuse the photo. One
-image per user at a time, at most one per minute — a newer accepted photo still replaces the
+image per user at a time, at most one every 15 seconds — a newer accepted photo still replaces the
 older — and the ticker holds at most 12 items. Text messages to the bot are unaffected.
 
 ### TV mode and recommendations
@@ -164,7 +170,7 @@ as an idea through the same moderated path as `/say`.
 | **Nebius Token Factory** | Seven jobs through Mastra's `nebius/<model>` router, all on `Qwen/Qwen3-30B-A3B-Instruct-2507`: moderating every idea and nickname, writing the steering prompt that transitions from the current scene, writing an amend's one-thing change, moderating a pitch brief against its own rubric, writing the ad read shared by the pitch and by any steer whose idea asks for an ad, proposing candidate titles for the scene's "you might also like" rail, and running the TV concierge's conversation. An eighth job, `nebius/openbmb/MiniCPM-V-4_5`, moderates every ticker photo before it is stored. |
 | **Mastra** | The backend framework: eight agents (`moderator`, `sceneWriter`, `amendWriter`, `pitchModerator`, `pitchWriter`, `showrunner`, `recsWriter`, `concierge`), a Telegram channel via `@chat-adapter/telegram` in polling mode, per-user `Memory` (last 10 messages) on LibSQL storage, and the `registerApiRoute()` custom routes that serve the whole HTTP contract plus all three static pages. A voice note to the bot is transcribed before it reaches the showrunner, so every tool works by voice too. |
 | **Vonage Video API** | Fan-out: one routed session. The broadcaster publishes a canvas-plus-WebAudio `MediaStreamTrack` with `OT.initPublisher`; every viewer connects with a subscribe-only token from `GET /viewer-token`. |
-| **SLNG** | `slng/fish/tts:s2.1-pro` on `eu-west.api.slng.ai` synthesises the channel's voice — the ad read for a steer whose idea asks for an ad, and the sponsored ad read a viewer unlocks at 3 karma — mixed into the published audio one clip at a time, ducking Director's own audio while it plays. Voice notes to the bot are transcribed with SLNG, and so is every `tv.html` concierge turn, which SLNG then speaks back. |
+| **SLNG** | `slng/fish/tts:s2.1-pro` on `eu-west.api.slng.ai` synthesises the channel's voice — the ad read for a steer whose idea asks for an ad, and the sponsored ad read from any viewer's pitch — mixed into the published audio one clip at a time, ducking Director's own audio while it plays. Voice notes to the bot are transcribed with SLNG, and so is every `tv.html` concierge turn, which SLNG then speaks back. |
 | **Titan OS** | `tv.html`: a 10-foot UI for the channel — remote/keyboard navigation, a "you might also like" rail driven by the scene on air (`recs.ts`), and a `concierge` agent (`concierge.ts`) you can talk to for movie/show picks and what's on live TV, by voice or by typing. Catalog data (TVmaze, Wikipedia) is keyless — see `catalog.ts`. |
 | **Galtea** | Adversarial evaluation of the moderator: a SECURITY dataset red-teamed the real-person rule, and the run found it missed a real person when the idea was written in Spanish. Fixed and re-run before/after — see `docs/eval/GALTEA.md`. |
 
@@ -229,7 +235,7 @@ the event; fal's list price is $0.08/s. Keep `?director=off` on until you mean t
 | `VONAGE_PRIVATE_KEY64` | yes | That application's private key, base64-encoded. |
 | `SLNG_API_KEY` | yes | SLNG key for the channel's TTS voice. |
 | `TELEGRAM_BOT_TOKEN` | yes | Bot token from BotFather. |
-| `PUBLIC_URL` | no | Link the bot sends in DMs. Defaults to `http://localhost:4111`. |
+| `PUBLIC_URL` | yes | Link the bot sends in DMs. No default; use `http://localhost:4111` locally. |
 | `PORT` | no | HTTP port. Defaults to `4111`. |
 
 ## Project layout
@@ -238,9 +244,10 @@ the event; fal's list price is $0.08/s. Keep `?director=off` on until you mean t
 src/mastra/
 ├── index.ts               Routes, Mastra instance, broadcaster-secret gate, fal-proxy wiring
 ├── channel.ts             In-memory state machine: idea queue, steer lifecycle, likes, karma
-├── pitch.ts               The karma-gated sponsored voice-over: slot, cooldown, deadline
+├── pitch.ts               The sponsored voice-over: slot, cooldown, deadline
 ├── showrunner.ts          The Nebius agents: moderation, steering, amends, the pitch and ad, recs
-├── announcer.ts           SLNG TTS: synthesises and serves the spoken clips
+├── announcer.ts           SLNG TTS: synthesises and serves the spoken clips (and their clean lines)
+├── ad-banner.ts           On-screen AD banner state: which line is airing, until when
 ├── telegram.ts            Telegram channel: showrunner agent, its tools, proactive DMs
 ├── vonage.ts              Vonage session creation and token minting
 ├── catalog.ts             Keyless catalog: TVmaze (series, live TV) + Wikipedia (films)

@@ -10,11 +10,11 @@ Studio is at `/studio`. Custom routes cannot live under `/api` (Mastra reserves 
 | Route | Body / query | Response |
 |---|---|---|
 | `GET /status?uid=<uid>` | poll every 1 s; `uid` counts you as a viewer | `Status` (below) |
-| `GET /me?uid=<uid>` | — | `{ karma, pitchUnlocked, pitchCooldownSeconds }` for one viewer. Not folded into `/status`: that route is polled every second by every viewer, this one is only needed when the pitch button has to know where you stand. `400` on an invalid uid. |
+| `GET /me?uid=<uid>` | — | `{ karma, pitchCooldownSeconds }` for one viewer. Not folded into `/status`: that route is polled every second by every viewer, this one is only needed when the pitch button has to know where you stand. `400` on an invalid uid. |
 | `POST /say` | `{ uid, name, text, source?: "web"｜"voice", kind?: "new"｜"amend" }` | `200 {ok:true,id}` · `422 {ok:false,reason}` moderated out · `409 {ok:false,reason}` refused by the channel (see below) · `503` moderation down · `400` invalid |
 | `POST /say` | `{ uid, name, text, source?: "web"｜"voice" }` | `200 {ok:true,id}` · `422 {ok:false,reason}` moderated out · `409 {ok:false,reason}` already queued · `503` moderation down · `400` invalid |
 | `POST /say-voice` | `multipart/form-data`: `uid`, `name`, `audio` (blob) | same codes as `/say` (with `source: "voice"`), plus `415 {ok:false,reason}` bad audio type/size and `422 {ok:false,reason,heard}` when nothing was heard; every response from this route that has a transcript includes `heard: "<transcript>"` |
-| `POST /pitch` | `{ uid, name, brief }` | `200 {ok:true,line}` — `line` is the ad read the voice will speak · `403` under `PITCH_MIN_KARMA` (3) · `429` per-user cooldown (3 min) or rate limit · `409` another pitch has the slot · `422` moderated out · `503` moderation, writing or TTS down · `400` invalid. Every failure carries `{ok:false,code,reason}`. |
+| `POST /pitch` | `{ uid, name, brief }` | `200 {ok:true,line}` — `line` is the ad read the voice will speak, open to any viewer · `429` per-user cooldown (3 min) or rate limit · `409` another pitch has the slot · `422` moderated out · `503` moderation, writing or TTS down · `400` invalid. Every failure carries `{ok:false,code,reason}`. |
 | `POST /like` | `{ uid }` | `{ ok: boolean }` — false if already liked, own scene, or nothing on air |
 | `GET /viewer-token` | — | `{ applicationId, sessionId, token }` subscribe-only Vonage token |
 | `GET /announcer/:clipId` | — | `audio/mpeg`, one spoken clip: the ad read for a steer whose idea asked for an ad, or a pitch's ad read; 404 once forgotten |
@@ -103,6 +103,7 @@ interface Status {
   chat: { id; name; text; at; karma }[];                             // last 50
   rank: { name; karma }[];                                           // top 10
   pitch: { name; brief; state } | null;  // sponsored voice-over waiting, playing, or just dropped
+  ad: { line; endsAt } | null;           // on-screen AD banner: the line airing now, and when it ends
   ts: number;
 }
 ```
@@ -114,6 +115,12 @@ above): `"amend"` means the item changes one thing about the scene on air rather
 (nobody collected it within 60 s — shown for a few seconds so viewers see it never aired). The
 field is `null` the rest of the time, including while the ad read is still being written.
 
+`ad` is set by `POST /b/:secret/clip-started` (below) the moment the broadcaster actually starts
+playing a clip, and clears itself `AD_BANNER_MS` (10 s) later (`src/mastra/ad-banner.ts`) — the same
+10 s the broadcaster hard-stops the clip at, so the banner and the voice go quiet together. `null`
+the rest of the time, including the whole `AD_CLIP_DELAY_MS` (17 s) gap between a steer landing and
+its ad read actually starting.
+
 ## Broadcaster page (secret in the path; wrong secret → 404)
 
 | Route | Response |
@@ -123,6 +130,7 @@ field is `null` the rest of the time, including while the ad read is still being
 | | `pitch` is `{ pitchId, name, url }`, a sponsored voice-over waiting for the air. It rides along with whatever the poll was going to answer — including a poll that would otherwise be `204`, which becomes a `200` carrying only `pitch`. Handed out exactly once, so act on it in the same poll; unlike the steer it is NOT repeated. Queue it behind any clip still playing and report the outcome. |
 | `POST /b/:secret/steer-result` | body `{ steerId, applied, reason? }` → `{ ok, onAir }`. Send `applied:true` on Director's `prompt_applied`, `false` on `prompt_rejected`. |
 | `POST /b/:secret/pitch-result` | body `{ pitchId, played, reason? }` → `{ ok }`. Frees the pitch slot either way. A pitch nobody reports on is dropped 60 s after it was handed out. |
+| `POST /b/:secret/clip-started` | body `{ clipId }` → `{ ok }`. Sent the moment a clip actually starts playing (fire-and-forget from the broadcaster's side). Sets `status.ad` to that clip's line for `AD_BANNER_MS`. `404` on an unknown or already-forgotten `clipId`, `400` on a malformed one. |
 | `ALL /b/:secret/fal-proxy` | fal client `proxyUrl`. Holds `FAL_KEY` server-side. |
 | `POST /b/:secret/eval` | body `{ name, text }` → `200 { ok: true, reason: "", prompt }` when accepted, `200 { ok: false, reason }` when moderation refuses, `503 { ok: false, reason }` when the moderator or scene writer fails · `400` invalid. Runs `moderate(text, name)` and, when accepted, `writeSteer(undefined, text)` exactly as `/say` would, with no side effects: nothing is queued, nothing airs, no TTS runs. The evaluation hook for external red-teaming (Galtea); see `src/mastra/eval.ts`. |
 

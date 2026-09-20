@@ -7,6 +7,8 @@
 import type { AddResult, IdeaKind, Source } from "./channel";
 import type { ModerationOutcome } from "./showrunner";
 import type { TokenUsage } from "./spend";
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 
 export interface SayInput {
   uid: string;
@@ -54,7 +56,8 @@ export async function handleSay(
   try {
     outcome = await deps.moderate(input.text, input.name);
   } catch (error) {
-    console.error("moderation failed, idea not queued:", error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error("moderation failed, idea not queued:", error);
     // SLNG was already paid for this transcription even though moderation never ran.
     if (stt) deps.recordStt("rejected", input.name, input.text, stt.audioSeconds);
     return { status: 503, body: { ok: false, reason: "Moderation is unavailable, try again." } };

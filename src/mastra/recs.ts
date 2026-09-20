@@ -9,6 +9,8 @@
  * failed write/lookup cannot hold up or fail a steer.
  */
 import type { CandidateTitle, CatalogItem } from "./catalog";
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 import type { RecsQueryOutcome } from "./showrunner";
 import type { TokenUsage } from "./spend";
 
@@ -71,7 +73,8 @@ export async function buildSceneRecs(
     if (resolved.length < MIN_RESOLVED_TO_SHOW) return { sceneId, moodLine: query.moodLine, picks: [] };
     return { sceneId, moodLine: query.moodLine, picks: pickBest(resolved) };
   } catch (error) {
-    console.error(`recs failed for scene ${sceneId}, showing none:`, error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error(`recs failed for scene ${sceneId}, showing none:`, error);
     return { sceneId, moodLine: "", picks: [] };
   }
 }

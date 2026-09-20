@@ -10,6 +10,8 @@
  * real source before it ever reaches a viewer — that verification step is what stops an invented
  * title from being recommended.
  */
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 
 export const CATALOG_ATTRIBUTION = {
   tv: "TV data from TVmaze",
@@ -276,7 +278,8 @@ async function lookupOne(candidate: CandidateTitle): Promise<CatalogItem | undef
       ? await resolveFilmCandidate(candidate.title)
       : await resolveShowCandidate(candidate.title, candidate.year);
   } catch (error) {
-    console.error(`catalog lookup failed for "${candidate.title}":`, error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error(`catalog lookup failed for "${candidate.title}":`, error);
     return undefined; // network/timeout/source-down drops this one candidate, never throws
   }
 }
@@ -310,7 +313,8 @@ export async function detailsById(id: string, mediaType: MediaType): Promise<Cat
     }
     return undefined;
   } catch (error) {
-    console.error(`catalog detailsById failed for ${mediaType}:${id}:`, error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error(`catalog detailsById failed for ${mediaType}:${id}:`, error);
     return undefined;
   }
 }

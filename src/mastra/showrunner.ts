@@ -4,14 +4,16 @@
  * writeSteer() runs when the idea is about to air, because it needs the scene that is on screen then.
  * writeAmend() is the same job for an amend ("Yes, and"): it keeps the scene but changes one thing.
  * isAdIdea() decides whether a NEW idea's text is asking for an ad; only then does the channel's
- * voice speak at all (steer-voice.ts), writing the read with the same writeAdRead() the karma-gated
- * pitch uses (moderatePitch()/writeAdRead(), pitch.ts).
+ * voice speak at all (steer-voice.ts), writing the read with the same writeAdRead() the pitch uses
+ * (moderatePitch()/writeAdRead(), pitch.ts).
  * writeRecsQuery() proposes real movie/show titles for recs.ts to verify against the catalog
  * (catalog.ts) — the model never gets to name a title directly to a viewer, only to propose
  * candidates that get checked.
  */
 import { Agent } from "@mastra/core/agent";
 import { z } from "zod";
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 import type { TokenUsage } from "./spend";
 
 export const MAX_IDEA_CHARS = 280;
@@ -194,7 +196,8 @@ export function nebiusUsage(
   if (inputTokens === undefined || outputTokens === undefined) {
     if (!warnedMissingNebiusUsage) {
       warnedMissingNebiusUsage = true;
-      console.warn(
+      // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+      log.warn(
         `Nebius usage missing on a ${source} result; recording $0 for it (and any more like it)`,
       );
     }
@@ -287,9 +290,15 @@ export async function writeAmend(
   currentPrompt: string,
   amendment: string,
 ): Promise<SteerWriteOutcome> {
-  const result = await amendWriter.generate(
-    `CURRENT STEERING PROMPT: ${currentPrompt}\n\nVIEWER AMENDMENT: <amendment>${amendment}</amendment>`,
-  );
+  let result: Awaited<ReturnType<typeof amendWriter.generate>>;
+  try {
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    result = await amendWriter.generate(
+      `CURRENT STEERING PROMPT: ${currentPrompt}\n\nVIEWER AMENDMENT: <amendment>${amendment}</amendment>`,
+    );
+  } catch (error) {
+    throw new Error(`amend writer call failed for amendment: ${amendment}`, { cause: error });
+  }
   const prompt = result.text.trim();
   if (!prompt) throw new Error(`amend writer returned an empty prompt for amendment: ${amendment}`);
   return { prompt, usage: nebiusUsage(result.usage, "amend writer") };

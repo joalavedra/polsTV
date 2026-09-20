@@ -1,13 +1,15 @@
 /**
  * Whether a NEW steer carries a spoken clip, and what it costs. Silent unless the idea reads as a
  * request for an ad (`isAdIdea`, showrunner.ts); an ad idea gets the same ad-writing agent the
- * karma-gated pitch uses (`writeAdRead`), time-boxed, then synthesised by SLNG (`synthesise`,
+ * pitch uses (`writeAdRead`), time-boxed, then synthesised by SLNG (`synthesise`,
  * announcer.ts). The two calls that touch the network are dependency-injected — like say.ts/
  * pitch.ts — so this is testable without Nebius, SLNG or a network: index.ts wires the real
  * functions as `steerVoiceDeps`.
  */
 import { isAdIdea, type SpokenLineOutcome } from "./showrunner";
 import type { TokenUsage } from "./spend";
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 
 /**
  * An ad write arriving after this is worthless: the scene is already on its way up. Only the write
@@ -67,14 +69,18 @@ export async function decideSteerVoice(
       afterTimeout(AD_WRITE_TIMEOUT_MS, "ad writer"),
     ]);
   } catch (error) {
-    console.warn(`ad read skipped for idea ${idea.id}, steering silent:`, error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.warn(`ad read skipped for idea ${idea.id}, steering silent:`, error, { ideaId: idea.id });
     return SILENT_VOICE;
   }
   try {
     const clipId = await deps.synthesise(`steer-${idea.id}`, ad.line);
     return { usage: ad.usage, clipId, url: `announcer/${clipId}` };
   } catch (error) {
-    console.error(`announcer failed for idea ${idea.id}, steering without it:`, error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error(`announcer failed for idea ${idea.id}, steering without it:`, error, {
+      ideaId: idea.id,
+    });
     return { usage: ad.usage, clipId: undefined, url: undefined };
   }
 }

@@ -1,7 +1,7 @@
 /**
- * The ticker's in-memory item store: images shared via Telegram that scroll along the bottom of
- * the viewer page, outside the broadcast picture. Pure and synchronous, clock injected — same
- * style as Channel (channel.ts).
+ * The ticker's in-memory item store: images shared via Telegram that sit in slots along the
+ * bottom of the viewer page, outside the broadcast picture. Pure and synchronous, clock injected
+ * — same style as Channel (channel.ts).
  *
  * ponytail: in-memory only, capped at 12 items; state dies with the process, like channel.ts.
  */
@@ -19,9 +19,15 @@ export interface TickerItem {
 }
 
 export const TICKER_MAX_ITEMS = 12;
-export const TICKER_ITEM_TTL_MS = 60 * 1000;
-/** Same length as TICKER_ITEM_TTL_MS by design: a user gets one live item at a time. */
-export const TICKER_COOLDOWN_MS = 60 * 1000;
+/** 5 s on screen plus one TICKER_POLL_MS poll interval (see index.html), so every viewer sees
+ * roughly the same 5 s life for a photo regardless of where their poll lands. */
+export const TICKER_ITEM_TTL_MS = 6_000;
+/**
+ * Decoupled from TICKER_ITEM_TTL_MS: each accepted photo costs a moderation call, so the
+ * cooldown can't drop to the same 5 s as the on-screen life. Still enforces "a user has one live
+ * item at a time" (see add()).
+ */
+export const TICKER_COOLDOWN_MS = 15_000;
 
 export interface AddTickerItemInput {
   uid: string;

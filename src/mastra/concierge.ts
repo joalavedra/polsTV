@@ -14,6 +14,8 @@ import { Memory } from "@mastra/memory";
 import { z } from "zod";
 import type { CandidateTitle, CatalogItem, MediaType } from "./catalog";
 import { lookupCandidates, whatsOnNow } from "./catalog";
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 import { capWords, nebiusUsage, spokenText } from "./showrunner";
 import type { TokenUsage } from "./spend";
 
@@ -263,7 +265,8 @@ async function synthesiseSafely(deps: TvAskDeps, uid: string, say: string): Prom
     deps.recordTts(deps.clipBytes(clipId));
     return `announcer/${clipId}`;
   } catch (error) {
-    console.error("concierge TTS failed, replying silent:", error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error("concierge TTS failed, replying silent:", error);
     return undefined;
   }
 }
@@ -277,7 +280,8 @@ async function transcribeAsk(
     if (transcription.audioSeconds !== undefined) deps.recordStt(transcription.audioSeconds);
     return { heard: transcription.text.trim() };
   } catch (error) {
-    console.error("tv/ask transcription failed:", error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error("tv/ask transcription failed:", error);
     return { failed: true };
   }
 }
@@ -312,7 +316,8 @@ export async function handleTvAsk(deps: TvAskDeps, input: TvAskInput): Promise<T
       ...(onAir ? { onAir } : {}),
     });
   } catch (error) {
-    console.error("concierge failed:", error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error("concierge failed:", error);
     return { status: 503, body: { ok: false, reason: "The concierge is busy, try again." } };
   }
   deps.recordTokens(reply.usage);

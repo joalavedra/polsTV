@@ -1,21 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PitchDeps } from "./pitch";
-import {
-  PITCH_COOLDOWN_MS,
-  PITCH_MIN_KARMA,
-  PITCH_SLOT_TIMEOUT_MS,
-  PitchSlot,
-  submitPitch,
-} from "./pitch";
+import { PITCH_COOLDOWN_MS, PITCH_SLOT_TIMEOUT_MS, PitchSlot, submitPitch } from "./pitch";
 
-function setup(karma = PITCH_MIN_KARMA) {
+function setup() {
   let clock = 1_000_000;
   const slot = new PitchSlot(() => clock);
   const tick = (ms: number) => {
     clock += ms;
   };
   const reserve = (uid = "ana", name = "Ana") =>
-    slot.reserve({ uid, name, brief: "sell my lemonade stand", karma });
+    slot.reserve({ uid, name, brief: "sell my lemonade stand" });
   return { slot, tick, reserve };
 }
 
@@ -23,13 +17,20 @@ function setup(karma = PITCH_MIN_KARMA) {
 function pitchIds(slot: PitchSlot): number[] {
   const ids: number[] = [];
   for (const uid of ["ana", "bob", "carol"]) {
-    const reserved = slot.reserve({ uid, name: uid, brief: "lemonade", karma: PITCH_MIN_KARMA });
+    const reserved = slot.reserve({ uid, name: uid, brief: "lemonade" });
     if (!reserved.ok) throw new Error(reserved.reason);
     ids.push(reserved.pitch.id);
     slot.release(reserved.pitch.id);
   }
   return ids;
 }
+
+describe("open to everyone", () => {
+  it("lets a viewer with no karma reserve the slot", () => {
+    const ctx = setup();
+    expect(ctx.reserve().ok).toBe(true);
+  });
+});
 
 /** Reserve, synthesise and hand a pitch to the broadcaster, as submitPitch would. */
 function airborne(ctx: ReturnType<typeof setup>, uid = "ana") {
@@ -38,29 +39,6 @@ function airborne(ctx: ReturnType<typeof setup>, uid = "ana") {
   ctx.slot.ready(reserved.pitch.id, `announcer/pitch-${reserved.pitch.id}`);
   return reserved.pitch;
 }
-
-describe("karma gate", () => {
-  it("refuses one karma short and accepts at exactly the gate", () => {
-    expect(setup(PITCH_MIN_KARMA - 1).reserve().ok).toBe(false);
-    expect(setup(PITCH_MIN_KARMA).reserve().ok).toBe(true);
-  });
-
-  it("tells the viewer what they have and what they need", () => {
-    const refused = setup(1).reserve();
-    expect(refused.ok).toBe(false);
-    if (refused.ok) return;
-    expect(refused.code).toBe("karma");
-    expect(refused.reason).toContain(`${PITCH_MIN_KARMA} karma`);
-    expect(refused.reason).toContain("You have 1");
-  });
-
-  it("costs nothing: a refused pitch leaves the slot and the cooldown untouched", () => {
-    const ctx = setup(0);
-    ctx.reserve();
-    expect(ctx.slot.status()).toBeUndefined();
-    expect(ctx.slot.cooldownSeconds("ana")).toBe(0);
-  });
-});
 
 describe("cooldown", () => {
   it("holds a viewer off until the cooldown has fully elapsed", () => {
@@ -221,7 +199,6 @@ describe("status", () => {
 describe("submitPitch", () => {
   function deps(overrides: Partial<PitchDeps> = {}): PitchDeps {
     return {
-      karmaOf: () => PITCH_MIN_KARMA,
       moderate: async () => ({
         verdict: { ok: true, reason: "" },
         usage: { inputTokens: 10, outputTokens: 2 },
@@ -253,17 +230,6 @@ describe("submitPitch", () => {
     await submitPitch(new PitchSlot(), d, input);
     expect(d.recordTokens).toHaveBeenCalledTimes(2);
     expect(d.recordTts).toHaveBeenCalledWith(32_000);
-  });
-
-  it("checks karma before paying for anything", async () => {
-    const d = deps({ karmaOf: () => PITCH_MIN_KARMA - 1 });
-    const result = await submitPitch(new PitchSlot(), d, input);
-    expect(result).toEqual({
-      ok: false,
-      code: "karma",
-      reason: expect.stringContaining("karma") as unknown as string,
-    });
-    expect(d.recordTokens).not.toHaveBeenCalled();
   });
 
   it("charges the moderation call but airs nothing when a brief is turned down", async () => {

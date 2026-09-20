@@ -30,4 +30,5 @@ app.post("/frame/:name", async (c) => {
 
 // ponytail: localhost-only, so the proxy is ungated here. The real server gates it with a secret.
 serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 3100 });
-console.log("spike on http://127.0.0.1:3100");
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+process.stdout.write("spike on http://127.0.0.1:3100\n");
