@@ -212,7 +212,7 @@ export const pitch = createTool({
   description:
     `Have ${CHANNEL_NAME}'s own voice read a short, tongue-in-cheek advert for something of the ` +
     "caller's, over whatever scene is on air. Open to everyone; one pitch on air at a time and " +
-    "one per viewer every three minutes. Returns the ad read, or why it was turned down.",
+    "one per viewer every 30 seconds. Returns the ad read, or why it was turned down.",
   inputSchema: z.object({
     brief: z
       .string()
@@ -455,8 +455,8 @@ scene that's already on screen right now, like adding a hat or making it snow, w
 When someone asks what's on, what's airing, or what's happening on ${CHANNEL_NAME}, call whats_on.
 When someone asks about their karma, their queued idea, or how their scene did, call my_stats.
 
-The pitch is open to everyone: the channel's voice reads a short joke advert for something of
-theirs over whatever is on air, one at a time and one per viewer every three minutes. When someone
+Making an ad is open to everyone: the channel's voice reads a short joke advert for something of
+theirs over whatever is on air, one at a time and one per viewer every 30 seconds. When someone
 wants to sell, advertise or promote something, call pitch with their brief and read them back the
 ad the voice will speak. If they have not used it, offer it in one sentence.
 
@@ -548,7 +548,7 @@ async function sendTelegramDM(uid: string, text: string): Promise<void> {
  * `sendDM`); web viewers see the dropped state on `/status` instead. Never throws into the caller.
  */
 export async function notifyPitchDropped(uid: string): Promise<void> {
-  const text = `Your pitch never made it to air — the channel's voice didn't pick it up in time. ` +
+  const text = `Your ad never made it to air — the channel's voice didn't pick it up in time. ` +
     "Your karma is untouched, try again.";
   await sendTelegramDM(uid, text);
 }

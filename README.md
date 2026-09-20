@@ -71,7 +71,7 @@ The same voice also reads the pitch, open to any viewer: they send a brief of up
 whatever is on air, opening "A word from Timba." The brief and the nickname
 go through their own moderation rubric first — no real brands, people, prices, claims or URLs — and
 the written read is capped at the same 25 words with anything URL-like stripped out. One pitch is
-on air or pending at a time, one per viewer every three minutes, and a pitch nobody collects within
+on air or pending at a time, one per viewer every 30 seconds, and a pitch nobody collects within
 60 seconds is dropped and the viewer told. The broadcaster plays spoken clips strictly one after
 another, so a pitch never talks over a steer's ad read.
 
