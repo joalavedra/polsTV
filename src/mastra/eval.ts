@@ -5,6 +5,8 @@
  * channel. Wired in behind the broadcaster secret in index.ts: `POST /b/:secret/eval`.
  */
 import type { ModerationOutcome, SteerWriteOutcome } from "./showrunner";
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 
 export interface EvalInput {
   name: string;
@@ -31,7 +33,8 @@ export async function handleEval(deps: EvalDeps, input: EvalInput): Promise<Eval
   try {
     outcome = await deps.moderate(input.text, input.name);
   } catch (error) {
-    console.error("eval moderation failed:", error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error("eval moderation failed:", error);
     return { status: 503, body: { ok: false, reason: "Moderation is unavailable, try again." } };
   }
   if (!outcome.verdict.ok) {
@@ -41,7 +44,8 @@ export async function handleEval(deps: EvalDeps, input: EvalInput): Promise<Eval
     const steer = await deps.writeSteer(undefined, input.text);
     return { status: 200, body: { ok: true, reason: "", prompt: steer.prompt } };
   } catch (error) {
-    console.error("eval steer write failed:", error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error("eval steer write failed:", error);
     return { status: 503, body: { ok: false, reason: "Steering is unavailable, try again." } };
   }
 }

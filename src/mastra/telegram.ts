@@ -29,6 +29,8 @@ import { ticker } from "./ticker";
 import { transcribe } from "./transcriber";
 import type { VoiceIntakeDeps } from "./voice-intake";
 import { extractTelegramVoice, handleVoiceMessage } from "./voice-intake";
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 
 const TELEGRAM_PREFIX = "telegram:";
 const DEFAULT_PUBLIC_URL = "http://localhost:4111";
@@ -118,7 +120,8 @@ export async function submitIdeaLogic(
   try {
     outcome = await deps.moderate(text, name);
   } catch (error) {
-    console.error(`moderation failed for telegram idea from ${uid}:`, error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error(`moderation failed for telegram idea from ${uid}:`, error, { uid });
     return { queued: false, reason: "Moderation is unavailable right now, try again in a bit." };
   }
   const { verdict, usage } = outcome;
@@ -488,12 +491,16 @@ export async function sendDM(uid: string, text: string, sender: DMSender): Promi
     await sender.native(chatId, text);
     return;
   } catch (nativeError) {
-    console.warn(`telegram DM to ${uid}: native route failed, falling back to fetch`, nativeError);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.warn(`telegram DM to ${uid}: native route failed, falling back to fetch`, nativeError, {
+      uid,
+    });
   }
   try {
     await sender.fallback(chatId, text);
   } catch (fallbackError) {
-    console.error(`telegram DM to ${uid}: both routes failed, giving up`, fallbackError);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error(`telegram DM to ${uid}: both routes failed, giving up`, fallbackError, { uid });
   }
 }
 
@@ -576,6 +583,7 @@ export async function notifySceneChange(change: SceneChange): Promise<void> {
     const jobs = sceneChangeMessages(change, watchLink());
     await Promise.all(jobs.map((job) => sendTelegramDM(job.uid, job.text)));
   } catch (error) {
-    console.error("notifySceneChange failed unexpectedly:", error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error("notifySceneChange failed unexpectedly:", error);
   }
 }

@@ -9,6 +9,8 @@
  */
 import { Agent } from "@mastra/core/agent";
 import { z } from "zod";
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 import type { TokenUsage } from "./spend";
 
 export const MAX_IDEA_CHARS = 280;
@@ -191,7 +193,8 @@ export function nebiusUsage(
   if (inputTokens === undefined || outputTokens === undefined) {
     if (!warnedMissingNebiusUsage) {
       warnedMissingNebiusUsage = true;
-      console.warn(
+      // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+      log.warn(
         `Nebius usage missing on a ${source} result; recording $0 for it (and any more like it)`,
       );
     }

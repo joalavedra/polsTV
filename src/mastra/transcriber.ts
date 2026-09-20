@@ -14,6 +14,8 @@
  * hint; a corrupt file gets a clean 400 with a JSON error body; the real response carries
  * `metadata.duration` in seconds (undocumented — the docs' example response omits it).
  */
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 
 const STT_URL = "https://eu-west.api.slng.ai/v1/stt/deepgram/nova:3";
 
@@ -54,7 +56,8 @@ export async function transcribe(audio: Uint8Array, mime: string): Promise<Trans
   const audioSeconds = result.metadata?.duration;
   // Kept as a log line on purpose, exactly parallel to slng_tts: the numbers the SLNG submission
   // asks for. lang is logged, not returned — the caller only needs the text to feed into /say.
-  console.info(
+  // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+  log.info(
     `slng_stt ms=${Math.round(performance.now() - startedAt)} bytes=${audio.length} ` +
       `audio_s=${audioSeconds ?? "?"} lang=${channel?.detected_language ?? "?"}`,
   );

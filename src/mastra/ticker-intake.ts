@@ -15,6 +15,8 @@ import { nebiusUsage } from "./showrunner";
 import type { ModerationOutcome, Verdict } from "./showrunner";
 import type { TokenUsage } from "./spend";
 import type { AddTickerItemInput, TickerItem, TickerMime } from "./ticker";
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 
 export const TICKER_MIN_SHORT_SIDE_PX = 240;
 export const TICKER_MAX_DOWNLOAD_BYTES = 1_000_000;
@@ -190,7 +192,8 @@ export async function handlePhotoSubmission(
   try {
     imageOutcome = await deps.moderateImage(bytes, mime);
   } catch (error) {
-    console.error("ticker image moderation failed, refusing:", error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error("ticker image moderation failed, refusing:", error);
     return { accepted: false, reply: "couldn't check that image, try again" };
   }
   deps.recordTicker(imageOutcome.usage);
@@ -296,7 +299,8 @@ export async function moderateTickerImage(
     VISION_TIMEOUT_MS,
   );
   const ms = Math.round(performance.now() - startedAt);
-  console.info(`ticker_vision_moderation ms=${ms} bytes=${bytes.length}`);
+  // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+  log.info(`ticker_vision_moderation ms=${ms} bytes=${bytes.length}`);
   const verdict = imageVerdictSchema.parse(result.object);
   return { verdict, usage: nebiusUsage(result.usage, "ticker image moderator"), ms };
 }

@@ -15,6 +15,8 @@ import type { ModerationOutcome, SpokenLineOutcome } from "./showrunner";
 import { moderatePitch, writeAdRead } from "./showrunner";
 import type { TokenUsage } from "./spend";
 import { spend } from "./spend";
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 
 /** Likes needed before a viewer can instruct the voice. Three scenes' worth of other people. */
 export const PITCH_MIN_KARMA = 3;
@@ -220,7 +222,11 @@ export async function submitPitch(
     return { ok: true, line: ad.line };
   } catch (error) {
     slot.abandon(id);
-    console.error(`pitch ${id} from ${input.uid} failed, slot freed:`, error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error(`pitch ${id} from ${input.uid} failed, slot freed:`, error, {
+      pitchId: id,
+      uid: input.uid,
+    });
     return { ok: false, code: "unavailable", reason: "The voice is busy right now. Try again." };
   }
 }

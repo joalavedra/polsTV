@@ -33,6 +33,8 @@ import { notifyPitchDropped, notifySceneChange, showrunner } from "./telegram";
 import { ticker } from "./ticker";
 import { transcribe } from "./transcriber";
 import { videoAccess } from "./vonage";
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 
 const broadcasterSecret = process.env["BROADCASTER_SECRET"];
 if (!broadcasterSecret || broadcasterSecret.length < 32) {
@@ -113,9 +115,11 @@ const pitchStatus = {
 function expireStaleSteer(): void {
   const abandoned = channel.expireStaleSteer();
   if (!abandoned) return;
-  console.warn(
+  // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+  log.warn(
     `steer ${abandoned.steerId} (idea ${abandoned.ideaId}) was never reported on; dropping it ` +
       `so the queue can move. The broadcaster page may have reloaded or lost the server.`,
+    { steerId: abandoned.steerId, ideaId: abandoned.ideaId },
   );
   spend.markNotAired(abandoned.ideaId);
 }
@@ -124,7 +128,11 @@ function expireStaleSteer(): void {
 function sweepPitches(): void {
   pitchSlot.sweep();
   for (let dropped = pitchSlot.takeDropped(); dropped; dropped = pitchSlot.takeDropped()) {
-    console.warn(`pitch ${dropped.id} from ${dropped.uid} was never played, dropped`);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.warn(`pitch ${dropped.id} from ${dropped.uid} was never played, dropped`, {
+      pitchId: dropped.id,
+      uid: dropped.uid,
+    });
     void notifyPitchDropped(dropped.uid);
   }
 }
@@ -248,6 +256,8 @@ const ACCEPTED_VOICE_TYPES = new Set(["audio/webm", "audio/ogg", "audio/mp4", "a
 const MIN_HEARD_CHARS = 3;
 
 export const mastra = new Mastra({
+  // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+  logger: log,
   agents: { moderator, sceneWriter, amendWriter, pitchModerator, pitchWriter, showrunner },
   // Channels (Telegram) need storage on the Mastra instance or subscriptions, dedup and approvals
   // reset on every restart. Also backs the showrunner's per-user memory (docs/cards/mastra-nebius).
@@ -305,7 +315,8 @@ export const mastra = new Mastra({
           const client = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for") ?? "local";
           if (postTooSoon(`diag:${client}`)) return c.body(null, 429);
           const report = (await c.req.text()).slice(0, 2_000).replace(/[\r\n]+/g, " ");
-          console.info(`client_diag ${report}`);
+          // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+          log.info(`client_diag ${report}`);
           return c.body(null, 204);
         },
       }),
@@ -422,7 +433,8 @@ export const mastra = new Mastra({
           try {
             transcription = await transcribe(bytes, declaredType);
           } catch (error) {
-            console.error("transcription failed:", error);
+            // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+            log.error("transcription failed:", error);
             return c.json({ ok: false, reason: "Could not hear that, try again." }, 503);
           }
           const heard = transcription.text.trim();
@@ -546,7 +558,12 @@ export const mastra = new Mastra({
           if (!isBroadcaster(c.req.param("secret"))) return c.notFound();
           const body = steerResultBody.safeParse(await c.req.json().catch(() => null));
           if (!body.success) return c.json({ ok: false }, 400);
-          if (!body.data.applied) console.warn("director rejected a steer:", body.data.reason);
+          // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+          if (!body.data.applied) {
+            log.warn("director rejected a steer:", body.data.reason, {
+              steerId: body.data.steerId,
+            });
+          }
           // Captured before resolving: on rejection resolveSteer's result carries no ideaId, but
           // the ledger needs one to move the idea's cost into notAired instead of a scene. Also
           // the right id for an applied amend: its own (pendingBefore.ideaId), not the scene it
@@ -569,7 +586,10 @@ export const mastra = new Mastra({
           if (!isBroadcaster(c.req.param("secret"))) return c.notFound();
           const body = pitchResultBody.safeParse(await c.req.json().catch(() => null));
           if (!body.success) return c.json({ ok: false }, 400);
-          if (!body.data.played) console.warn("pitch clip did not play:", body.data.reason);
+          // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+          if (!body.data.played) {
+            log.warn("pitch clip did not play:", body.data.reason, { pitchId: body.data.pitchId });
+          }
           pitchSlot.release(body.data.pitchId);
           return c.json({ ok: true });
         },

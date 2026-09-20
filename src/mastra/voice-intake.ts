@@ -9,6 +9,8 @@
  * (transcriber.ts) are the real implementations telegram.ts wires in for production.
  */
 import type { Transcription } from "./transcriber";
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 
 // Mirrors index.ts's /say-voice limits (MAX_VOICE_AUDIO_BYTES, MIN_HEARD_CHARS) — not imported
 // from there since index.ts imports telegram.ts, and telegram.ts imports this module.
@@ -95,7 +97,8 @@ export async function handleVoiceMessage(
     const bytes = await deps.downloadAudio(intake.fileId);
     transcription = await deps.transcribe(bytes, intake.mimeType);
   } catch (error) {
-    console.error(`telegram voice pipeline failed for ${name}:`, error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error(`telegram voice pipeline failed for ${name}:`, error);
     return { kind: "transcribe-failed", reply: VOICE_TRANSCRIBE_FAILED_REPLY };
   }
 
