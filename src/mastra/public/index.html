@@ -578,7 +578,17 @@
     .top-center { top: calc(env(safe-area-inset-top, 0px) + 10px); left: 10px; max-width: 62vw; }
     .top-right { top: calc(env(safe-area-inset-top, 0px) + 10px); right: 10px; }
 
-    #action-rail { right: 12px; bottom: calc(var(--inputbar-h) + 28px + env(safe-area-inset-bottom, 0px)); }
+    /* The rail sits above the input bar AND above whichever banners are showing: --ticker-h is
+       the photo slots' height, --ad-h the AD slate's (each 0px while hidden). The caption is
+       anchored inside the video box, which ends above the banners, so it needs neither. */
+    #action-rail {
+      right: 12px;
+      bottom: calc(
+        var(--inputbar-h) + 28px + env(safe-area-inset-bottom, 0px) +
+        var(--ticker-h, 0px) + var(--ad-h, 0px)
+      );
+      transition: bottom .2s ease;
+    }
     #stage-caption { bottom: calc(var(--inputbar-h) + env(safe-area-inset-bottom, 0px)); padding-top: 56px; }
     /* Mobile's rail is like/chat/more — spend, share and pitch all live in the more-sheet
        (pitch is the top-right pill, already hidden below desktop by default). */
@@ -756,6 +766,12 @@
      sibling agent's contract, possibly absent in this worktree) is how far its bottom edge sits
      above the viewport bottom. The fallbacks below make this banner sit correctly on its own
      either way: 0 on desktop, the pinned input bar's height on phones. */
+  /* --ad-h: this slate's measured height while it shows (set by renderAdBanner), 0px otherwise.
+     The stage caption and the action rail add it to --ticker-h so they clear both banners. */
+  :root { --ad-h: 0px; }
+  @media (prefers-reduced-motion: reduce) {
+    #action-rail, #stage-caption { transition: none; }
+  }
   #ad-banner {
     position: fixed;
     left: 0;
@@ -1321,11 +1337,15 @@
     #subscriber-container video, #subscriber-container object { object-fit: cover !important; }
     #offair-card { border-radius: 12px; }
     #stage-caption { padding-right: calc(24px + var(--rail-btn) + 16px); }
-    /* ticker: the banner overlays the caption's own corner too (#video-stage no longer clears
-       it) — shift the caption up by the banner's height while it's showing. */
-    body.has-ticker #stage-caption { bottom: var(--ticker-h); transition: bottom .2s ease; }
+    /* The banners overlay the caption's own corner (#video-stage no longer clears them) — shift
+       the caption up by whatever is showing: the photo slots (--ticker-h) plus the AD slate
+       (--ad-h). Both are 0px while hidden. */
+    #stage-caption {
+      bottom: calc(var(--ticker-h, 0px) + var(--ad-h, 0px));
+      transition: bottom .2s ease;
+    }
     @media (prefers-reduced-motion: reduce) {
-      body.has-ticker #stage-caption { transition: none; }
+      #stage-caption { transition: none; }
     }
 
     /* Top gradient so the top bar's pills stay legible over any picture underneath them. */
@@ -1379,8 +1399,8 @@
     #action-rail {
       right: calc(var(--side-col-w) + 24px);
       top: calc(var(--topbar-h) + 16px);
-      bottom: calc(var(--ticker-h, 0px) + 16px);
-      /* ticker: a photo arriving/expiring shifts this band's floor — smooth it instead of a snap. */
+      bottom: calc(var(--ticker-h, 0px) + var(--ad-h, 0px) + 16px);
+      /* A photo or an ad arriving/expiring shifts this band's floor — smooth it, don't snap. */
       transition: bottom .2s ease;
       transform: none;
       justify-content: center;
@@ -2966,6 +2986,7 @@
       adBannerEndsAt = null;
       adBanner.classList.remove("ad-banner-show");
       adBanner.hidden = true;
+      document.documentElement.style.setProperty("--ad-h", "0px");
     }
 
     function renderAdBanner(ad) {
@@ -2974,6 +2995,8 @@
       adBannerEndsAt = ad.endsAt;
       adBannerLine.textContent = ad.line;
       adBanner.hidden = false;
+      // The caption and the action rail clear this slate by its real height (one or two lines).
+      document.documentElement.style.setProperty("--ad-h", `${adBanner.offsetHeight}px`);
       adBannerBar.classList.remove("ad-banner-draining");
       void adBannerBar.offsetWidth; // restart the drain transition for a new ad
       adBannerBar.classList.add("ad-banner-draining");
