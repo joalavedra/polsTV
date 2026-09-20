@@ -129,8 +129,8 @@
   .splash-logo { display: block; width: min(80vw, 420px); height: auto; border-radius: 14px; margin: 0 auto .75rem; }
   #offair-card p { margin: 0; font-size: 1rem; color: var(--text-dim); }
 
-  /* ---------- Action rail: shared TikTok-style vertical column of round buttons, present at
-     every breakpoint. Only its `right`/`bottom` anchor changes per breakpoint below. ---------- */
+  /* ---------- Action rail: shared vertical column of round buttons over the video's right edge,
+     present at every breakpoint. Only its `right`/`bottom` anchor changes per breakpoint below. ---------- */
   #action-rail {
     position: fixed;
     z-index: 10;
@@ -175,18 +175,6 @@
   }
   #like-btn[aria-pressed="true"] .rail-icon { background: var(--accent); border-color: var(--accent); }
   #like-btn:disabled { cursor: not-allowed; }
-  .rail-avatar {
-    width: var(--rail-btn);
-    height: var(--rail-btn);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 700;
-    color: #14141c;
-    border: 2px solid rgba(255, 255, 255, .65);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, .55);
-  }
   #spend-amount { font-size: .62rem; font-weight: 700; padding: 0 .15rem; text-align: center; }
 
   /* Pure-TV restore control: invisible until chrome-hidden, then fades in on pointer/touch
@@ -288,6 +276,10 @@
   }
   #viewer-pill { display: none; }
   #interface-btn { display: none; }
+  /* Desktop-only entry point for the pitch modal (mobile keeps it in the more-sheet only —
+     see #more-pitch-btn). Same base-hidden / desktop-shown pattern as its .top-right neighbours
+     above, so it never needs a mobile-specific override. */
+  #pitch-btn { display: none; }
   #spend-pill { font-weight: 700; font-variant-numeric: tabular-nums; }
 
   #spend-popover, #share-popover {
@@ -578,8 +570,9 @@
 
     #action-rail { right: 12px; bottom: calc(var(--inputbar-h) + 28px + env(safe-area-inset-bottom, 0px)); }
     #stage-caption { bottom: calc(var(--inputbar-h) + env(safe-area-inset-bottom, 0px)); padding-top: 56px; }
-    /* Mobile's rail is avatar/like/chat/share/more — pitch and spend live in the more-sheet. */
-    #pitch-btn, #spend-pill { display: none; }
+    /* Mobile's rail is like/chat/more — spend, share and pitch all live in the more-sheet
+       (pitch is the top-right pill, already hidden below desktop by default). */
+    #spend-pill, #share-btn { display: none; }
     #more-btn { display: flex; }
 
     #say-input { font-size: 16px; }
@@ -610,7 +603,7 @@
     #subscriber-container video, #subscriber-container object { object-fit: cover !important; }
     .chrome { display: none; }
 
-    /* Short viewport: a smaller button + tighter gap so all 5 rail items fit above the input bar
+    /* Short viewport: a smaller button + tighter gap so all 3 rail items fit above the input bar
        without spilling off the top of the screen. */
     #action-rail {
       right: 8px;
@@ -620,7 +613,7 @@
     }
     .rail-label { font-size: .6rem; }
     #stage-caption { bottom: calc(var(--inputbar-h) + env(safe-area-inset-bottom, 0px)); padding-top: 28px; }
-    #pitch-btn, #spend-pill { display: none; }
+    #spend-pill, #share-btn { display: none; }
     #more-btn { display: flex; }
 
     /* position/left/right/bottom already come from the base #say-form rule above. */
@@ -988,7 +981,7 @@
   /* ticker:end */
 
   /* pitch:start — sponsored voice-over, open to everyone. Self-contained, safe to drop in a
-     conflict. #pitch-btn's own look now comes from .rail-item/.rail-icon (action-rail, above) and
+     conflict. #pitch-btn's own look now comes from .pill/.pill-btn (top-right, desktop only) and
      .sheet-row (#more-pitch-btn, the mobile overflow-sheet entry point). */
   #pitch-modal {
     position: fixed;
@@ -1232,8 +1225,9 @@
     .top-right { top: 14px; right: 20px; }
     #viewer-pill { display: inline-flex; }
     #interface-btn { display: inline-flex; }
+    #pitch-btn { display: inline-flex; }
 
-    /* ---- Action rail: overlays the video's right edge, vertically centred-low, TikTok-style.
+    /* ---- Action rail: overlays the video's right edge, vertically centred-low.
        Anchored by top+bottom (not top:58%+translateY, which had no ceiling and let the rail run
        past the ticker/bottom edge on short windows) so its box is always exactly the band between
        the top bar and the ticker, and justify-content centres the icons inside that band instead
@@ -1256,8 +1250,10 @@
       background: radial-gradient(60% 100% at 100% 50%, rgba(0, 0, 0, .4), transparent 70%);
       pointer-events: none;
     }
-    #more-btn { display: none; }
-    #pitch-btn, #spend-pill { display: flex; }
+    /* Desktop rail is like/share/spend only — comments are gone (the chat column is always
+       visible here) and pitch is the .top-right pill above, not a rail item. */
+    #more-btn, #chat-count-btn { display: none; }
+    #spend-pill { display: flex; }
 
     /* Popovers open to the left of the rail, clear of both the side column and the viewport. */
     #spend-popover, #share-popover {
@@ -1382,8 +1378,8 @@
 
   /* Short desktop windows: the action rail's box is already capped to the band between the top
      bar and the ticker (see #action-rail above), so it can never run past either edge, but a
-     short enough window still can't fit 6 full-size icons centred in that band. Shrink the icons
-     and tighten the gaps in two tiers instead. */
+     short enough window still can't fit the full-size icons centred in that band. Shrink the
+     icons and tighten the gaps in two tiers instead. */
   @media (min-width: 821px) and (max-height: 760px) {
     #action-rail { gap: 12px; --rail-btn: 40px; }
     #action-rail .rail-label { font-size: .6rem; }
@@ -1460,15 +1456,14 @@
 
     <div class="top-right chrome">
       <div class="pill" id="viewer-pill"><span id="viewer-count">0 watching</span></div>
+      <!-- pitch:start -->
+      <button type="button" class="pill pill-btn" id="pitch-btn">pitch</button>
+      <!-- pitch:end -->
       <button type="button" class="pill pill-btn" id="mute-btn" aria-pressed="false">mute</button>
       <button type="button" class="pill pill-btn" id="interface-btn" aria-pressed="false">interface</button>
     </div>
 
     <div id="action-rail" class="chrome">
-      <div class="rail-item" id="rail-avatar-item" hidden>
-        <span id="rail-avatar" class="rail-avatar" aria-hidden="true"></span>
-        <span class="rail-label" id="rail-avatar-karma"></span>
-      </div>
       <button type="button" class="rail-item" id="like-btn" aria-pressed="false" hidden>
         <span id="like-heart" class="rail-icon" aria-hidden="true">&#9825;</span>
         <span id="like-count" class="rail-label">0</span>
@@ -1483,18 +1478,6 @@
         </span>
         <span class="rail-label" id="chat-count-label">0</span>
       </button>
-      <!-- pitch:start -->
-      <button type="button" class="rail-item" id="pitch-btn">
-        <span class="rail-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 10v4h3l7 4V6l-7 4H3z"></path>
-            <path d="M17 9a3.2 3.2 0 010 6"></path>
-          </svg>
-        </span>
-        <span class="rail-label" id="pitch-btn-label">pitch</span>
-      </button>
-      <!-- pitch:end -->
       <button type="button" class="rail-item" id="share-btn" aria-haspopup="dialog" aria-expanded="false"
         aria-controls="share-popover">
         <span class="rail-icon" aria-hidden="true">&#8599;</span>
@@ -1626,6 +1609,9 @@
     <div id="more-sheet-backdrop"></div>
     <div class="sheet-panel" role="dialog" aria-modal="true" aria-label="More">
       <div id="more-sheet-handle" aria-hidden="true"></div>
+      <button type="button" class="sheet-row" id="more-share-btn">
+        <span>Share</span>
+      </button>
       <!-- pitch:start -->
       <button type="button" class="sheet-row" id="more-pitch-btn">
         <span>Pitch</span><span class="sheet-row-value" id="more-pitch-state">ready</span>
@@ -1773,9 +1759,6 @@
     const likeHeart = document.getElementById("like-heart");
     const likeCount = document.getElementById("like-count");
     const likeOwnLabel = document.getElementById("like-own-label");
-    const railAvatarItem = document.getElementById("rail-avatar-item");
-    const railAvatar = document.getElementById("rail-avatar");
-    const railAvatarKarma = document.getElementById("rail-avatar-karma");
     const chatCountBtn = document.getElementById("chat-count-btn");
     const chatCountLabel = document.getElementById("chat-count-label");
     const shareBtn = document.getElementById("share-btn");
@@ -1785,6 +1768,7 @@
     const moreSheet = document.getElementById("more-sheet");
     const moreSheetBackdrop = document.getElementById("more-sheet-backdrop");
     const moreClose = document.getElementById("more-close");
+    const moreShareBtn = document.getElementById("more-share-btn");
     const moreInterfaceBtn = document.getElementById("more-interface-btn");
     const moreSpendBtn = document.getElementById("more-spend-btn");
     const moreSpendTotal = document.getElementById("more-spend-total");
@@ -1961,6 +1945,12 @@
       closeMoreSheet();
       openSpendPopover();
     });
+    // Mobile's rail has no room for a share icon (see #action-rail above) — this row is the
+    // only way to it there, reusing the same popover the desktop rail button opens.
+    moreShareBtn.addEventListener("click", () => {
+      closeMoreSheet();
+      openSharePopover();
+    });
 
     // ---------- share: copy link, or open the Telegram bot ----------
     let shareOpen = false;
@@ -1999,7 +1989,10 @@
     });
     document.addEventListener("click", (event) => {
       if (!shareOpen) return;
-      if (sharePopover.contains(event.target) || shareBtn.contains(event.target)) return;
+      // moreShareBtn's own click is what just opened this (see its listener above) — without this,
+      // that same click bubbling here would close the popover the instant it opens on mobile.
+      if (sharePopover.contains(event.target) || shareBtn.contains(event.target)
+        || moreShareBtn.contains(event.target)) return;
       closeSharePopover();
     });
 
@@ -2422,8 +2415,8 @@
     });
 
     // pitch:start — sponsored voice-over, open to everyone. Self-contained; renderStatus calls
-    // renderPitchBadge, everything else lives here. Two entry points share this state: the round
-    // rail button (desktop, always visible) and the "Pitch" row in mobile's more-sheet.
+    // renderPitchBadge, everything else lives here. Two entry points share this state: the
+    // top-right pill (desktop only) and the "Pitch" row in mobile's more-sheet.
     const ME_POLL_MS = 5000;
     const pitchBtn = document.getElementById("pitch-btn");
     const morePitchBtn = document.getElementById("more-pitch-btn");
@@ -2904,15 +2897,6 @@
       stageSteeringLine.hidden = false;
       stageSteeringLine.textContent = `${label} · ${steering.name}: ${steering.text}`;
     }
-    // Prompter avatar: the same name-hash tint chat bubbles use, hidden with the like button
-    // whenever nothing is on air.
-    function renderRailAvatar(now) {
-      railAvatarItem.hidden = !now;
-      if (!now) return;
-      setText(railAvatar, (now.name || "?").charAt(0).toUpperCase());
-      setStyle(railAvatar, "background", `hsl(${hashHue(now.name)}, 85%, 85%)`);
-      setText(railAvatarKarma, `★ ${now.karma}`);
-    }
     function renderChatCount(chat) {
       setText(chatCountLabel, String(chat.length));
     }
@@ -2924,7 +2908,6 @@
       renderLivePill(statusLive, status.viewers);
       diffLikesAndKarma(previousNow, status.now);
       renderCaption(status.now);
-      renderRailAvatar(status.now);
       renderAmendToggle(status.now); // amend
       renderLikeButton();
       renderPitchBadge(status.pitch); // pitch
