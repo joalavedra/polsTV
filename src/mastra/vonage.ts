@@ -54,6 +54,12 @@ function session(): Promise<string> {
 
 /** Mint a token for the shared session. Viewers can only subscribe; the broadcaster publishes. */
 export async function videoAccess(role: "publisher" | "subscriber"): Promise<VideoAccess> {
-  const id = await session();
+  let id: string;
+  try {
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    id = await session();
+  } catch (error) {
+    throw new Error(`Vonage session unavailable while issuing a ${role} token`, { cause: error });
+  }
   return { applicationId, sessionId: id, token: vonage.video.generateClientToken(id, { role }) };
 }

@@ -20,6 +20,7 @@ import type {
   DMSender,
   MyStatsDeps,
   SubmitIdeaDeps,
+  SubmitIdeaResult,
 } from "./telegram";
 import { TICKER_ACCEPTED_REPLY } from "./ticker-intake";
 import type { PhotoIntakeDeps } from "./ticker-intake";
@@ -110,7 +111,15 @@ describe("submitIdeaLogic", () => {
   it("reports the channel's reason when the user already has a queued idea", async () => {
     const alreadyQueued = "You already have an idea in the queue. Wait until it airs.";
     const d = deps({ addIdea: vi.fn((): AddResult => ({ ok: false, reason: alreadyQueued })) });
-    const result = await submitIdeaLogic(d, "telegram:1", "Ana", "a second idea");
+    let result: SubmitIdeaResult;
+    try {
+      // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+      result = await submitIdeaLogic(d, "telegram:1", "Ana", "a second idea");
+    } catch (error) {
+      throw new Error("submitIdeaLogic rejected; it must resolve to an outcome here", {
+        cause: error,
+      });
+    }
     expect(result).toEqual({ queued: false, reason: alreadyQueued });
     expect(d.recordModeration).toHaveBeenCalledWith("rejected", "Ana", "a second idea", ZERO_USAGE);
   });
@@ -542,7 +551,14 @@ describe("routeDirectMessage", () => {
     const d = deps({
       voice: voiceDeps({ downloadAudio: vi.fn(async () => Promise.reject(new Error("no file"))) }),
     });
-    await routeDirectMessage(d, t, msg, defaultHandler);
+    try {
+      // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+      await routeDirectMessage(d, t, msg, defaultHandler);
+    } catch (error) {
+      throw new Error("routeDirectMessage rejected; it must resolve to an outcome here", {
+        cause: error,
+      });
+    }
     expect(defaultHandler).not.toHaveBeenCalled();
     expect(d.voice.transcribe).not.toHaveBeenCalled();
     consoleError.mockRestore();

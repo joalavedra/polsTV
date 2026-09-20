@@ -26,16 +26,29 @@ export async function synthesise(clipId: string, line: string): Promise<string> 
   if (!apiKey) throw new Error("SLNG_API_KEY is missing. Add it to .env (see docs/cards/slng.md).");
   const spoken = `${TTS_TONE_MARKER} ${line}`;
   const startedAt = performance.now();
-  const response = await fetch(TTS_URL, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ text: spoken, format: "mp3" }),
-    signal: AbortSignal.timeout(10_000),
-  });
+  let response: Response;
+  try {
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    response = await fetch(TTS_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ text: spoken, format: "mp3" }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (error) {
+    throw new Error(`SLNG TTS request failed (network or timeout) for clip ${clipId}`, {
+      cause: error,
+    });
+  }
   if (!response.ok) {
     throw new Error(`SLNG TTS failed with ${response.status}: ${(await response.text()).slice(0, 200)}`);
   }
-  const audio = Buffer.from(await response.arrayBuffer());
+  let audio: Buffer;
+  try {
+    audio = Buffer.from(await response.arrayBuffer());
+  } catch (error) {
+    throw new Error(`SLNG TTS response body read failed for clip ${clipId}`, { cause: error });
+  }
   // Kept as a log line on purpose: these are the latency numbers the SLNG submission asks for.
   console.info(
     `slng_tts ms=${Math.round(performance.now() - startedAt)} bytes=${audio.length} chars=${spoken.length}`,

@@ -287,9 +287,15 @@ export async function writeAmend(
   currentPrompt: string,
   amendment: string,
 ): Promise<SteerWriteOutcome> {
-  const result = await amendWriter.generate(
-    `CURRENT STEERING PROMPT: ${currentPrompt}\n\nVIEWER AMENDMENT: <amendment>${amendment}</amendment>`,
-  );
+  let result: Awaited<ReturnType<typeof amendWriter.generate>>;
+  try {
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    result = await amendWriter.generate(
+      `CURRENT STEERING PROMPT: ${currentPrompt}\n\nVIEWER AMENDMENT: <amendment>${amendment}</amendment>`,
+    );
+  } catch (error) {
+    throw new Error(`amend writer call failed for amendment: ${amendment}`, { cause: error });
+  }
   const prompt = result.text.trim();
   if (!prompt) throw new Error(`amend writer returned an empty prompt for amendment: ${amendment}`);
   return { prompt, usage: nebiusUsage(result.usage, "amend writer") };
