@@ -142,16 +142,26 @@ before it is ever stored; a rejection or a moderation error/timeout both refuse 
 image per user at a time, at most one every 15 seconds — a newer accepted photo still replaces the
 older — and the ticker holds at most 12 items. Text messages to the bot are unaffected.
 
-### TV mode and recommendations
+### Recommendations and TV mode
+
+`GET /recs` answers with the scene on air's "you might also like" picks, and asking is also what
+builds them: the first request for a scene asks Nebius to propose real movie and show titles that
+match its mood, verifies each one against a keyless public catalog — TVmaze for series and live TV,
+Wikipedia for films (`catalog.ts`) — and keeps the best 3. A scene lasts 10 seconds. The first poll
+after a scene change answers with an empty list; the next one (1-3 seconds later) has the picks.
+
+Both the main viewer page (`index.html`) and `tv.html` show these picks and both trigger the same
+build: on the main page, a compact "you might also like" section under the queue on desktop
+(`#rail`), or a row under the comments sheet's tabs on mobile and landscape phone (`#panel`),
+fetched when the scene on air changes and retried a few times while the build is still running.
+Cost: recommendations are now built for every scene that airs while at least one viewer has either
+page open — one Nebius call plus up to eight keyless catalog lookups per scene, built once per
+scene however many viewers are polling — where before this change that only happened while a
+`tv.html` was open.
 
 `tv.html` is a 10-foot UI for the same channel: the live picture full-bleed, remote/keyboard
 navigation (arrow keys move focus, Enter/OK activates, Backspace/Escape goes back), and a
-bottom-left "You might also like…" rail. `GET /recs` fills the rail and is also what builds it: the
-first request for a scene asks Nebius to propose real movie and show titles that match its mood,
-verifies each one against a keyless public catalog — TVmaze for series and live TV, Wikipedia for
-films (`catalog.ts`) — and keeps the best 3. A scene lasts 10 seconds, so nothing is built for a
-channel nobody is watching on `tv.html`, and a scene is built once however many TVs are open. The
-first poll after a scene change answers with an empty rail; the next one has the picks.
+bottom-left "You might also like…" rail.
 
 Hold OK on the Talk button (or hold Space anywhere) to ask the channel for something to watch, by
 voice — release to send, same SLNG transcription the viewer page's mic uses. A `concierge` agent
