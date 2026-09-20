@@ -29,13 +29,21 @@ import { ticker } from "./ticker";
 import { transcribe } from "./transcriber";
 import type { VoiceIntakeDeps } from "./voice-intake";
 import { extractTelegramVoice, handleVoiceMessage } from "./voice-intake";
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 
 const TELEGRAM_PREFIX = "telegram:";
-const DEFAULT_PUBLIC_URL = "http://localhost:4111";
 const CHANNEL_NAME = "polsTV";
 
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+/** The public address the bot links to in DMs. No loopback fallback: unset breaks every DM link
+ * silently, so this fails fast instead. Read lazily (only when called), never at import time. */
 export function watchLink(): string {
-  return process.env["PUBLIC_URL"] || DEFAULT_PUBLIC_URL;
+  const value = process.env["PUBLIC_URL"];
+  if (!value) {
+    throw new Error("PUBLIC_URL is missing. Add it to .env (see .env.example).");
+  }
+  return value;
 }
 
 /** Fails fast: a Telegram tool must never trust a uid the model could have supplied itself. */
@@ -118,7 +126,8 @@ export async function submitIdeaLogic(
   try {
     outcome = await deps.moderate(text, name);
   } catch (error) {
-    console.error(`moderation failed for telegram idea from ${uid}:`, error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error(`moderation failed for telegram idea from ${uid}:`, error, { uid });
     return { queued: false, reason: "Moderation is unavailable right now, try again in a bit." };
   }
   const { verdict, usage } = outcome;
@@ -392,11 +401,11 @@ export async function routeDirectMessage<
       const result = await handlePhotoSubmission(deps.photo, photoIntake);
       await thread.post(result.reply);
     } catch (error) {
-      console.error(`telegram photo pipeline failed for ${message.author.userName}:`, error);
+      log.error(`telegram photo pipeline failed for ${message.author.userName}:`, error);
       try {
         await thread.post("Something went wrong with that photo. Try again.");
       } catch (postError) {
-        console.error(
+        log.error(
           `failed to notify ${message.author.userName} after photo pipeline error:`,
           postError,
         );
@@ -501,12 +510,16 @@ export async function sendDM(uid: string, text: string, sender: DMSender): Promi
     await sender.native(chatId, text);
     return;
   } catch (nativeError) {
-    console.warn(`telegram DM to ${uid}: native route failed, falling back to fetch`, nativeError);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.warn(`telegram DM to ${uid}: native route failed, falling back to fetch`, nativeError, {
+      uid,
+    });
   }
   try {
     await sender.fallback(chatId, text);
   } catch (fallbackError) {
-    console.error(`telegram DM to ${uid}: both routes failed, giving up`, fallbackError);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error(`telegram DM to ${uid}: both routes failed, giving up`, fallbackError, { uid });
   }
 }
 
@@ -589,6 +602,7 @@ export async function notifySceneChange(change: SceneChange): Promise<void> {
     const jobs = sceneChangeMessages(change, watchLink());
     await Promise.all(jobs.map((job) => sendTelegramDM(job.uid, job.text)));
   } catch (error) {
-    console.error("notifySceneChange failed unexpectedly:", error);
+    // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+    log.error("notifySceneChange failed unexpectedly:", error);
   }
 }

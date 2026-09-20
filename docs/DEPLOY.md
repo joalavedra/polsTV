@@ -79,10 +79,10 @@ Telegram bot double-polls (`409 Conflict`) with more than one instance running.
 
 ## d. PUBLIC_URL
 
-`src/mastra/telegram.ts`'s `watchLink()` reads `PUBLIC_URL` (default `http://localhost:4111`)
-and sends it verbatim in the bot's "you're on air" DM — it must be the exact URL a viewer should
-open, trailing slash and all when one matters (see §e). Set it to the Fly/Railway URL normally,
-or to the joalavedra.com URL when fronting through Vercel (§e).
+`src/mastra/telegram.ts`'s `watchLink()` reads `PUBLIC_URL` (required, no default — it throws if
+unset) and sends it verbatim in the bot's "you're on air" DM — it must be the exact URL a viewer
+should open, trailing slash and all when one matters (see §e). Set it to the Fly/Railway URL
+normally, or to the joalavedra.com URL when fronting through Vercel (§e).
 
 ## e. Fronting from joalavedra.com (Astro static site on Vercel)
 

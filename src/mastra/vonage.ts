@@ -7,6 +7,8 @@
  */
 import { Vonage } from "@vonage/server-sdk";
 import { MediaMode } from "@vonage/video";
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 
 export interface VideoAccess {
   applicationId: string;
@@ -34,7 +36,8 @@ function session(): Promise<string> {
   sessionId ??= vonage.video
     .createSession({ mediaMode: MediaMode.ROUTED })
     .then((created) => {
-      console.warn(
+      // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+      log.warn(
         `VONAGE_SESSION_ID is not set, so this session dies with the process. ` +
           `Add to .env: VONAGE_SESSION_ID="${created.sessionId}"`,
       );

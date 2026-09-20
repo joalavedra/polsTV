@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AddResult, Scene } from "./channel";
 import { STEER_GAP_MS } from "./channel";
 import { PITCH_MIN_KARMA } from "./pitch";
@@ -12,6 +12,7 @@ import {
   sceneChangeMessages,
   sendDM,
   submitIdeaLogic,
+  watchLink,
   whatsOnLogic,
 } from "./telegram";
 import type {
@@ -159,6 +160,22 @@ describe("displayName", () => {
   it("falls back when there is no channel context or an empty name", () => {
     expect(displayName(undefined)).toBe("a viewer");
     expect(displayName({ userName: "   " })).toBe("a viewer");
+  });
+});
+
+describe("watchLink", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("fails fast when PUBLIC_URL is unset", () => {
+    vi.stubEnv("PUBLIC_URL", "");
+    expect(() => watchLink()).toThrow(/PUBLIC_URL/);
+  });
+
+  it("returns PUBLIC_URL as-is when set", () => {
+    vi.stubEnv("PUBLIC_URL", "https://example.test/");
+    expect(watchLink()).toBe("https://example.test/");
   });
 });
 
