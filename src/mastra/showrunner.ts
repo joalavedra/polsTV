@@ -16,9 +16,20 @@ import type { TokenUsage } from "./spend";
 export const MAX_IDEA_CHARS = 280;
 export const MAX_PITCH_BRIEF_CHARS = 140;
 
-/** Words an ad read gets after the "A word from <name>." credit: a scene is now 10 s, one read
- * per scene. */
-export const MAX_AD_READ_WORDS = 25;
+/**
+ * Words an ad read's body gets, credit excluded. The broadcaster hard-stops every ad clip at
+ * `AD_MAX_MS` (10 s) and SLNG renders speech at roughly 17.4 characters per second measured on
+ * production, so a read (including the ~25-character credit) must land under ~160 characters —
+ * about 20 words — to finish before the cut instead of losing its tagline.
+ */
+export const MAX_AD_READ_WORDS = 20;
+
+/**
+ * Character budget for an ad read's body, credit excluded, alongside `MAX_AD_READ_WORDS`: a body
+ * of unusually long words can stay within the word cap and still blow the ~17.4 chars/s budget
+ * before `AD_MAX_MS` cuts it. The credit adds roughly another 25 characters on top of this.
+ */
+export const MAX_AD_READ_CHARS = 130;
 
 const verdictSchema = z.object({
   ok: z.boolean(),
@@ -163,7 +174,7 @@ Structure, in this order:
 4. a tagline as the last sentence, naming the product again in three words or fewer
 
 - reply in the same language the brief is written in
-- 25 words maximum, spoken aloud, no line breaks, no lists, no parentheses
+- 20 words maximum, spoken aloud, no line breaks, no lists, no parentheses
 - contractions and an exclamation mark are fine where a voice would punch the line; nothing a
   text-to-speech voice would stumble over
 - sell only what the brief describes; invent nothing that exists in the real world beyond an event,
@@ -173,8 +184,8 @@ Structure, in this order:
 - never name the viewer, the channel, the idea queue, or AI
 
 Example. <brief>an ad for a lemonade stand run by frogs</brief>
-Thirsty? Lemonade just sits there. Croak Stand squeezes every lemon by webbed foot. One sip and
-you will not stop hopping. Croak Stand: lemonade, ribbited.
+Lemonade sits there. Croak Stand squeezes lemons by webbed foot. One sip, you'll hop for
+hours. Croak Stand: lemonade, ribbited.
 
 Reply with the ad read only. No preamble, no quotes, no stage directions.`,
 });
@@ -354,6 +365,28 @@ export async function moderatePitch(brief: string, name: string): Promise<Modera
 }
 
 /**
+ * Cap a spoken line at `maxChars`, dropping trailing sentences while it's over budget: a body of
+ * unusually long words can pass `capWords`'s word cap and still overrun the clip's time. Never
+ * cuts mid-sentence — when only one sentence remains and it still overruns, falls back to
+ * `capWords`'s word-boundary cut instead of chopping it by raw character count.
+ */
+export function capChars(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const cut = text.slice(0, maxChars);
+  const sentenceEnd = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("! "), cut.lastIndexOf("? "));
+  if (sentenceEnd > 0) return cut.slice(0, sentenceEnd + 1);
+  let wordsThatFit = 0;
+  let lengthSoFar = 0;
+  for (const word of text.split(" ").filter(Boolean)) {
+    const nextLength = lengthSoFar + (wordsThatFit > 0 ? 1 : 0) + word.length;
+    if (nextLength > maxChars) break;
+    lengthSoFar = nextLength;
+    wordsThatFit++;
+  }
+  return capWords(text, Math.max(1, wordsThatFit));
+}
+
+/**
  * Write the ad read for a moderated pitch brief, or for a steer idea that asked for an ad. Throws
  * when the model returns nothing or the call itself fails — the caller decides what "no ad" means
  * for its own flow. `abortSignal`, when given, is steer-voice.ts's time-box; the pitch flow has no
@@ -365,7 +398,8 @@ export async function writeAdRead(
   options?: { abortSignal?: AbortSignal },
 ): Promise<SpokenLineOutcome> {
   const result = await pitchWriter.generate(`<brief>${brief}</brief>`, options ?? {});
-  const body = capWords(stripUrlLike(spokenText(result.text)), MAX_AD_READ_WORDS);
+  const wordCapped = capWords(stripUrlLike(spokenText(result.text)), MAX_AD_READ_WORDS);
+  const body = capChars(wordCapped, MAX_AD_READ_CHARS);
   if (!body) throw new Error(`pitch writer returned an empty ad read for brief: ${brief}`);
   return { line: `A word from ${name}. ${body}`, usage: nebiusUsage(result.usage, "pitch writer") };
 }
