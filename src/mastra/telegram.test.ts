@@ -198,9 +198,9 @@ describe("whatsOnLogic", () => {
       {
         live: true,
         viewers: 5,
-        now: { ...scene({ name: "Ana", text: "a cat", likes: 3 }), karma: 3 },
+        now: { ...scene({ name: "Ana", text: "a cat", likes: 3 }), karma: 3, pid: "" },
         steering: { name: "Bob", text: "a dog", kind: "new" },
-        queue: [{ id: 2, name: "Carol", text: "a bird", karma: 1, kind: "new" }],
+        queue: [{ id: 2, name: "Carol", text: "a bird", karma: 1, kind: "new", pid: "" }],
         chat: [],
         rank: [],
         ts: 0,

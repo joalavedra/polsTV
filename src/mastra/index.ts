@@ -12,7 +12,11 @@ import { clip, clipLine, synthesise } from "./announcer";
 import type { Idea } from "./channel";
 import { channel } from "./channel";
 import { handleEval, type EvalDeps } from "./eval";
+import { deleteShot, loadHistoryIndex, readShot, saveHistoryIndex, saveShot } from "./history-io";
+import { history } from "./history";
+import { pidOf } from "./pid";
 import { livePitchDeps, pitchSlot, submitPitch } from "./pitch";
+import { handleSceneShot, type SceneShotDeps } from "./scene-shot";
 import type { SteerWriteOutcome } from "./showrunner";
 import { handleSay, type SayDeps, type SayInput, type SayOutcome } from "./say";
 import {
@@ -106,6 +110,8 @@ const clipStartedBody = z.object({
   clipId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
   seconds: z.unknown().optional(),
 });
+const pidParam = z.string().regex(/^[0-9a-f]{12}$/);
+const positiveIntParam = z.coerce.number().int().positive();
 
 const FALLBACK_CLIP_SECONDS = 10;
 
@@ -166,6 +172,28 @@ function isBroadcaster(secret: string): boolean {
   const expected = Buffer.from(broadcasterSecret as string);
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
+
+// Reverse lookup for GET /profile/:pid, filled wherever a pid is computed below. uid stays
+// server-side: this map is never serialised or exposed on any route.
+const pidToUid = new Map<string, string>();
+
+function toPid(uid: string): string {
+  const pid = pidOf(uid, broadcasterSecret as string);
+  pidToUid.set(pid, uid);
+  return pid;
+}
+
+// Loaded once at boot; history-io.ts logs and starts empty on a missing or corrupt index.
+history.load(await loadHistoryIndex());
+
+const sceneShotDeps: SceneShotDeps = {
+  nowScene: () => channel.status().now ?? undefined,
+  pidOf: toPid,
+  record: (entry) => history.record(entry),
+  persistIndex: () => saveHistoryIndex(history.all()),
+  saveShot,
+  deleteShot,
+};
 
 // Director's signalling bridge is missing from the proxy's default allow-list; without it every
 // session fails with HTTP 400 before reaching fal (docs/cards/director.md, spike results).
@@ -344,7 +372,11 @@ export const mastra = new Mastra({
           const viewer = uid.safeParse(c.req.query("uid"));
           if (viewer.success) channel.sawViewer(viewer.data);
           sweepPitches();
-          return c.json({ ...channel.status(), pitch: pitchSlot.status() ?? null, ad: adBanner.current() });
+          return c.json({
+            ...channel.status(toPid),
+            pitch: pitchSlot.status() ?? null,
+            ad: adBanner.current(),
+          });
         },
       }),
 
@@ -398,6 +430,46 @@ export const mastra = new Mastra({
           return c.body(new Uint8Array(item.bytes), 200, {
             "content-type": item.mime,
             "cache-control": "public, max-age=600",
+          });
+        },
+      }),
+
+      // HISTORY: which scenes a viewer has put on air. pid, not uid — see docs/CONTRACT.md.
+      registerApiRoute("/profile/:pid", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => {
+          const parsed = pidParam.safeParse(c.req.param("pid"));
+          if (!parsed.success) return c.json({ ok: false, reason: "Invalid pid." }, 400);
+          const pid = parsed.data;
+          const items = history.byViewer(pid);
+          const knownUid = pidToUid.get(pid);
+          return c.json({
+            pid,
+            name: items[0]?.name ?? (knownUid && channel.playerName(knownUid)) ?? "",
+            karma: knownUid ? channel.karmaOf(knownUid) : 0,
+            items: items.map((entry) => ({
+              ideaId: entry.ideaId,
+              text: entry.text,
+              airedAt: entry.airedAt,
+              shot: `shot/${entry.ideaId}`,
+            })),
+          });
+        },
+      }),
+
+      registerApiRoute("/shot/:ideaId", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => {
+          const parsed = positiveIntParam.safeParse(c.req.param("ideaId"));
+          if (!parsed.success) return c.notFound();
+          const bytes = await readShot(parsed.data);
+          if (!bytes) return c.notFound();
+          return c.body(new Uint8Array(bytes), 200, {
+            "content-type": "image/jpeg",
+            // Not immutable: an amend re-uses its scene's ideaId, so a later shot replaces this one.
+            "cache-control": "public, max-age=60",
           });
         },
       }),
@@ -633,6 +705,32 @@ export const mastra = new Mastra({
           if (line === undefined) return c.notFound();
           adBanner.start(line, clipSeconds(body.data.seconds) * 1000);
           return c.json({ ok: true });
+        },
+      }),
+
+      // HISTORY: one still per scene, captured by the broadcaster ~21 s after its steer applied
+      // (SCENE_SHOT_DELAY_MS in public/broadcaster.html). Fire-and-forget from that side; never
+      // allowed to affect steering or playback. Body is the raw JPEG, not JSON.
+      registerApiRoute("/b/:secret/scene-shot", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          if (!isBroadcaster(c.req.param("secret"))) return c.notFound();
+          const parsedId = positiveIntParam.safeParse(c.req.query("ideaId"));
+          if (!parsedId.success) return c.json({ ok: false, reason: "Invalid ideaId." }, 400);
+          const body = new Uint8Array(await c.req.arrayBuffer());
+          try {
+            const outcome = await handleSceneShot(sceneShotDeps, {
+              ideaId: parsedId.data,
+              contentType: c.req.header("content-type"),
+              body,
+            });
+            return c.json(outcome.body, outcome.status);
+          } catch (error) {
+            // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+            log.error("scene-shot failed:", error, { ideaId: parsedId.data });
+            return c.json({ ok: false, reason: "Could not save the still." }, 500);
+          }
         },
       }),
 
