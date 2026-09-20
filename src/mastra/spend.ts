@@ -97,6 +97,9 @@ export interface SpendSnapshot {
   pitches: { usd: number };
   /** Nebius cost of ticker photo/caption moderation — never tied to a scene (see recordTicker) */
   ticker: { usd: number };
+  /** The TV concierge (concierge.ts): its STT, LLM and TTS cost. A conversation spans scenes, so
+   * — like pitches and the ticker — it has no scene of its own. */
+  concierge: { usd: number };
 }
 
 function nebiusCost(usage: TokenUsage): number {
@@ -131,7 +134,8 @@ interface PendingIdea {
  * `markAired` moves that cost out of `notAired` and into its scene. fal and Vonage time is charged
  * directly to whichever scene is on air, or to `idle` when nothing is. A sponsored voice-over has
  * no scene of its own, so its cost goes to `pitches`. See spend.test.ts for the accounting
- * invariants (every dollar lands in exactly one of: a scene, notAired, idle, pitches, ticker).
+ * invariants (every dollar lands in exactly one of: a scene, notAired, idle, pitches, ticker,
+ * concierge).
  */
 export class SpendLedger {
   private fal = { usd: 0, seconds: 0 };
@@ -142,6 +146,7 @@ export class SpendLedger {
   private idleUsd = 0;
   private pitchesUsd = 0;
   private tickerUsd = 0;
+  private conciergeUsd = 0;
   private scenes: SceneSpend[] = [];
   private pending = new Map<number, PendingIdea>();
 
@@ -184,10 +189,7 @@ export class SpendLedger {
    * it down as a duplicate) — a refused idea's listening cost joins its judging cost in notAired.
    */
   recordStt(target: number | "rejected", name: string, text: string, audioSeconds: number): void {
-    const usd = slngSttCost(audioSeconds);
-    this.slng.usd += usd;
-    this.slng.audioSeconds += audioSeconds;
-    this.slng.calls += 1;
+    const usd = this.chargeSlngStt(audioSeconds);
     this.notAiredUsd += usd;
     if (target !== "rejected") this.chargePending(target, name, text, "slng", usd);
   }
@@ -212,6 +214,21 @@ export class SpendLedger {
     this.tickerUsd += usd;
   }
 
+  /** Charge one Nebius call for the TV concierge (concierge.ts): its structured reply. */
+  recordConciergeTokens(usage: TokenUsage): void {
+    this.conciergeUsd += this.chargeNebius(usage);
+  }
+
+  /** Charge one SLNG TTS clip for the concierge's spoken reply. */
+  recordConciergeTts(audioBytes: number): void {
+    this.conciergeUsd += this.chargeSlng(audioBytes);
+  }
+
+  /** Charge one SLNG STT call for a spoken ask to the concierge. */
+  recordConciergeStt(audioSeconds: number): void {
+    this.conciergeUsd += this.chargeSlngStt(audioSeconds);
+  }
+
   /** Charge fal Director open-session seconds to the scene on air, or "idle" when none is. */
   recordFal(target: number | "idle", seconds: number): void {
     const usd = seconds * FAL_DIRECTOR_USD_PER_SECOND;
@@ -226,6 +243,18 @@ export class SpendLedger {
     this.vonage.usd += usd;
     this.vonage.participantMinutes += participantMinutes;
     this.chargeSceneOrIdle(target, "vonage", usd);
+  }
+
+  /**
+   * Charge a Nebius call that resolves AFTER its scene already aired — recs.ts's scene ->
+   * recommendations write runs post-hoc (index.ts fires it after steer-result responds), so unlike
+   * `recordModeration`/`recordSteerWrite` there is no pending idea left to attribute it to by the
+   * time it completes. Same target rule as `recordFal`/`recordVonage`: the aired scene if it is
+   * still in the kept window, otherwise `idle`.
+   */
+  recordSceneTokens(target: number | "idle", usage: TokenUsage): void {
+    const usd = this.chargeNebius(usage);
+    this.chargeSceneOrIdle(target, "nebius", usd);
   }
 
   /**
@@ -282,12 +311,21 @@ export class SpendLedger {
       idle: { usd: this.idleUsd },
       pitches: { usd: this.pitchesUsd },
       ticker: { usd: this.tickerUsd },
+      concierge: { usd: this.conciergeUsd },
     };
   }
 
   private chargeSlng(audioBytes: number): number {
     const audioSeconds = audioBytes / SLNG_MP3_BYTES_PER_SECOND;
     const usd = slngCost(audioSeconds);
+    this.slng.usd += usd;
+    this.slng.audioSeconds += audioSeconds;
+    this.slng.calls += 1;
+    return usd;
+  }
+
+  private chargeSlngStt(audioSeconds: number): number {
+    const usd = slngSttCost(audioSeconds);
     this.slng.usd += usd;
     this.slng.audioSeconds += audioSeconds;
     this.slng.calls += 1;

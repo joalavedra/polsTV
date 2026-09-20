@@ -392,12 +392,16 @@
     border-left: 1px solid var(--panel-border);
     backdrop-filter: blur(14px);
     padding: 1rem;
-    overflow-y: auto;
-    /* The queue can end mid-row at the 34vh clip — fade the last stretch instead of a hard cut,
-       so it reads as "more below" rather than a broken row. */
-    mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
-    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+    /* recs: a flex column so the queue clips/fades in the remaining space while the recs section
+       (added below, recs:start) keeps its own height pinned at the bottom — see #rail-queue for
+       where the fade moved to. */
+    overflow: hidden;
   }
+  /* recs: the queue can end mid-row at the 34vh clip — fade the last stretch instead of a hard
+     cut, so it reads as "more below" rather than a broken row. Lives on the queue's own section
+     (not #rail) so the fade never dims the recs cards pinned below it. */
+  #rail > section:nth-of-type(2) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  #rail > section:nth-of-type(2) h2 { flex: 0 0 auto; }
   .rail-eyebrow {
     font-size: .68rem;
     letter-spacing: .1em;
@@ -440,7 +444,18 @@
     margin-right: .4rem;
     vertical-align: middle;
   }
-  #rail-queue { display: flex; flex-direction: column; gap: .4rem; }
+  #rail-queue {
+    display: flex;
+    flex-direction: column;
+    gap: .4rem;
+    /* recs: this used to be #rail's own scroll/fade; moved here so the recs cards pinned below
+       the queue (recs:start) never sit under the fade. */
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+  }
   #rail-queue .queue-item { padding: .4rem .55rem; }
   #rail-queue .q-avatar { display: inline-flex; }
   #rail-queue .queue-item { display: flex; align-items: flex-start; }
@@ -1165,6 +1180,108 @@
     #say-form:focus-within .amend-toggle { display: flex; }
   }
   /* amend:end */
+  /* recs:start — "You might also like": GET recs for the scene on air. Desktop: bottom section
+     of the "Up next" rail, pinned under the queue (#rail/#rail-queue above). Mobile/landscape
+     phone: a compact row under the panel's tabs (#panel-recs, in the HTML right after .tablist).
+     Hidden entirely (both variants) whenever there are no picks — see renderRecs in the JS. */
+  #recs-mood {
+    margin: 0 0 .4rem;
+    font-size: .7rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #recs-cards { display: flex; gap: .5rem; justify-content: space-between; }
+  .recs-card {
+    display: flex;
+    flex-direction: column;
+    gap: .2rem;
+    width: 54px;
+    text-decoration: none;
+    color: inherit;
+    border-radius: 4px;
+    transition: opacity .16s ease;
+  }
+  .recs-poster {
+    display: block;
+    width: 54px;
+    height: 81px;
+    object-fit: cover;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, .06);
+  }
+  .recs-title {
+    display: block;
+    font-size: .66rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .recs-year { display: block; font-size: .6rem; color: var(--text-dim); }
+  @media (hover: hover) {
+    .recs-card:hover .recs-poster { opacity: .85; }
+  }
+  .recs-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    .recs-card { transition: none; }
+  }
+  @media (min-width: 821px) and (max-height: 720px) {
+    /* Too short to fit the steering card, at least one queue row AND the cards — drop the
+       cards, never the queue. */
+    #rail-recs { display: none; }
+  }
+
+  /* Mobile/landscape-phone row: under the tab row, above the panes, visible on every tab.
+     Hidden on desktop, where the rail section above is used instead (desktop MQ below). */
+  #panel-recs {
+    display: flex;
+    gap: .5rem;
+    padding: 0 .75rem .6rem;
+    overflow-x: auto;
+  }
+  .panel-recs-card {
+    display: flex;
+    align-items: center;
+    gap: .35rem;
+    flex: 0 0 auto;
+    text-decoration: none;
+    color: inherit;
+    transition: opacity .16s ease;
+  }
+  .panel-recs-poster {
+    display: block;
+    width: 40px;
+    height: 60px;
+    object-fit: cover;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, .06);
+  }
+  .panel-recs-title {
+    display: block;
+    max-width: 90px;
+    font-size: .7rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  @media (hover: hover) {
+    .panel-recs-card:hover .panel-recs-poster { opacity: .85; }
+  }
+  .panel-recs-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    .panel-recs-card { transition: none; }
+  }
+  @media (min-width: 821px) and (min-height: 501px) {
+    #panel-recs { display: none; }
+  }
+  /* Belt-and-braces for the ID-vs-.chrome specificity trap documented above #splash: both ids
+     already sit inside #rail/#panel, which chrome-hidden already hides explicitly, but state it
+     here too since these ids carry their own `display` rules. */
+  body.chrome-hidden #rail-recs, body.chrome-hidden #panel-recs { display: none; }
+  /* recs:end */
   /* voice:start — hold-to-talk mic (SLNG STT via POST say-voice). Self-contained, safe to drop
      in a conflict. Fixed circle size, no extra flex width, so it can't push Say off at 360px. */
   .mic-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
@@ -1432,7 +1549,7 @@
     }
 
     /* ---- Side column: "Up next" stacked above the persistent chat/rank panel ---- */
-    #rail { display: block; }
+    #rail { display: flex; flex-direction: column; }
     #panel {
       left: auto;
       right: 0;
@@ -1699,6 +1816,29 @@
       <h2>Queue</h2>
       <div id="rail-queue"></div>
     </section>
+    <!-- recs:start -->
+    <section id="rail-recs" hidden>
+      <h2>You might also like</h2>
+      <p id="recs-mood"></p>
+      <div id="recs-cards">
+        <a class="recs-card" id="recs-card-0" target="_blank" rel="noopener noreferrer" hidden>
+          <img class="recs-poster" alt="" loading="lazy">
+          <span class="recs-title"></span>
+          <span class="recs-year"></span>
+        </a>
+        <a class="recs-card" id="recs-card-1" target="_blank" rel="noopener noreferrer" hidden>
+          <img class="recs-poster" alt="" loading="lazy">
+          <span class="recs-title"></span>
+          <span class="recs-year"></span>
+        </a>
+        <a class="recs-card" id="recs-card-2" target="_blank" rel="noopener noreferrer" hidden>
+          <img class="recs-poster" alt="" loading="lazy">
+          <span class="recs-title"></span>
+          <span class="recs-year"></span>
+        </a>
+      </div>
+    </section>
+    <!-- recs:end -->
   </aside>
 
   <div class="chrome" id="sheet-backdrop" hidden></div>
@@ -1714,6 +1854,22 @@
       <button type="button" class="tab tab-default" role="tab" id="tab-rank" aria-controls="pane-rank"
         aria-selected="false">RANK</button>
     </div>
+    <!-- recs:start -->
+    <div id="panel-recs" hidden>
+      <a class="panel-recs-card" id="panel-recs-card-0" target="_blank" rel="noopener noreferrer" hidden>
+        <img class="panel-recs-poster" alt="" loading="lazy">
+        <span class="panel-recs-title"></span>
+      </a>
+      <a class="panel-recs-card" id="panel-recs-card-1" target="_blank" rel="noopener noreferrer" hidden>
+        <img class="panel-recs-poster" alt="" loading="lazy">
+        <span class="panel-recs-title"></span>
+      </a>
+      <a class="panel-recs-card" id="panel-recs-card-2" target="_blank" rel="noopener noreferrer" hidden>
+        <img class="panel-recs-poster" alt="" loading="lazy">
+        <span class="panel-recs-title"></span>
+      </a>
+    </div>
+    <!-- recs:end -->
     <div class="panes">
       <div id="pane-chat" class="pane" role="tabpanel" aria-labelledby="tab-chat"></div>
       <div id="pane-queue" class="pane" role="tabpanel" aria-labelledby="tab-queue" hidden></div>
@@ -2608,6 +2764,87 @@
       trySay();
     });
 
+    // recs:start — "You might also like": GET recs for the scene on air, same page-relative
+    // route and shape tv.html's rail polls, retried a few times while recsStore.ensure() in
+    // index.ts is still building a new scene's picks. renderStatus calls onStatusIdea below;
+    // everything else lives here. Desktop cards live in #rail (rail:above), the mobile row in
+    // #panel (panel:above).
+    const RECS_RETRY_MS = 1500;
+    const RECS_MAX_RETRIES = 6;
+    const railRecsSection = document.getElementById("rail-recs");
+    const recsMoodEl = document.getElementById("recs-mood");
+    const railRecsCards = [0, 1, 2].map((i) => document.getElementById(`recs-card-${i}`));
+    const panelRecsSection = document.getElementById("panel-recs");
+    const panelRecsCards = [0, 1, 2].map((i) => document.getElementById(`panel-recs-card-${i}`));
+
+    let recsIdeaId; // the scene these sections currently reflect (or are fetching for)
+    let recsRetries = 0;
+    let recsTimer = null;
+
+    function renderRailRecsCard(card, item) {
+      card.hidden = !item;
+      if (!item) return;
+      const img = card.querySelector("img");
+      img.onerror = () => { card.hidden = true; };
+      img.alt = item.title;
+      img.src = item.posterUrl;
+      card.href = item.url;
+      card.querySelector(".recs-title").textContent = item.title;
+      card.querySelector(".recs-year").textContent = item.year ? String(item.year) : "";
+    }
+    function renderPanelRecsCard(card, item) {
+      card.hidden = !item;
+      if (!item) return;
+      const img = card.querySelector("img");
+      img.onerror = () => { card.hidden = true; };
+      img.alt = item.title;
+      img.src = item.posterUrl;
+      card.href = item.url;
+      card.querySelector(".panel-recs-title").textContent = item.title;
+    }
+    function hideRecs() {
+      railRecsSection.hidden = true;
+      panelRecsSection.hidden = true;
+    }
+    function renderRecs(data) {
+      const picks = data.picks || [];
+      if (picks.length === 0) { hideRecs(); return; }
+      setText(recsMoodEl, data.moodLine || "");
+      railRecsSection.hidden = false;
+      panelRecsSection.hidden = false;
+      for (let i = 0; i < 3; i += 1) {
+        renderRailRecsCard(railRecsCards[i], picks[i]);
+        renderPanelRecsCard(panelRecsCards[i], picks[i]);
+      }
+    }
+    async function fetchRecs(forIdeaId) {
+      let ok = false;
+      let data;
+      try {
+        const res = await fetch("recs");
+        ok = res.ok;
+        if (ok) data = await res.json();
+      } catch {
+        ok = false;
+      }
+      if (forIdeaId !== recsIdeaId) return; // the scene moved on while this was in flight
+      if (!ok || !data || data.sceneId !== forIdeaId) { hideRecs(); return; } // quiet: no toast
+      renderRecs(data);
+      if (data.picks && data.picks.length > 0) return; // got picks, done for this scene
+      recsRetries += 1;
+      if (recsRetries >= RECS_MAX_RETRIES) return; // gave the build enough tries this scene
+      recsTimer = setTimeout(() => fetchRecs(forIdeaId), RECS_RETRY_MS);
+    }
+    function onStatusIdea(ideaId) { // recs
+      if (ideaId === recsIdeaId) return; // same scene — amends keep the id, so never refetch
+      recsIdeaId = ideaId;
+      clearTimeout(recsTimer);
+      recsRetries = 0;
+      if (ideaId) fetchRecs(ideaId);
+      else hideRecs();
+    }
+    // recs:end
+
     // pitch:start — sponsored voice-over, open to everyone. Self-contained; renderStatus calls
     // renderPitchBadge, everything else lives here. Two entry points share this state: the
     // top-right pill (desktop only) and the "Pitch" row in mobile's more-sheet.
@@ -3144,6 +3381,7 @@
       renderAdBanner(status.ad); // adbanner
       setText(viewerCount, `${status.viewers} watching`);
       renderSteering(status.steering);
+      onStatusIdea(status.now ? status.now.ideaId : null); // recs
       syncList(railQueue, status.queue, (q) => q.id, renderQueueItem);
       syncList(paneQueue, status.queue, (q) => q.id, renderQueueItem);
       syncList(paneChat, status.chat, (c) => c.id, renderChatItem);

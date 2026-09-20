@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
  * Two branches once each declared the same identifier; the merge was textually clean, the module
  * was a SyntaxError, and the public page ran no script at all. This is the missing compiler.
  */
-const pages = ["index.html", "broadcaster.html"];
+const pages = ["index.html", "broadcaster.html", "tv.html"];
 const publicDir = join(import.meta.dirname, "public");
 
 function inlineModules(html: string): string[] {

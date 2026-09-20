@@ -11,8 +11,11 @@ import { adBanner } from "./ad-banner";
 import { clip, clipLine, synthesise } from "./announcer";
 import type { Idea } from "./channel";
 import { channel } from "./channel";
+import { detailsById, lookupCandidates } from "./catalog";
+import { concierge, handleTvAsk, runConciergeLive, type TvAskDeps, type TvAskInput } from "./concierge";
 import { handleEval, type EvalDeps } from "./eval";
 import { livePitchDeps, pitchSlot, submitPitch } from "./pitch";
+import { type RecsDeps, recsStore } from "./recs";
 import type { SteerWriteOutcome } from "./showrunner";
 import { handleSay, type SayDeps, type SayInput, type SayOutcome } from "./say";
 import {
@@ -23,9 +26,11 @@ import {
   moderator,
   pitchModerator,
   pitchWriter,
+  recsWriter,
   sceneWriter,
   writeAdRead,
   writeAmend,
+  writeRecsQuery,
   writeSteer,
 } from "./showrunner";
 import { spend } from "./spend";
@@ -98,6 +103,8 @@ const pitchResultBody = z.object({
   played: z.boolean(),
   reason: z.string().max(200).optional(),
 });
+// tv/ask's text-free fields: same uid rule as /say; text is optional here (a spoken ask has none).
+const tvAskFields = z.object({ uid, text: z.string().trim().min(1).max(MAX_IDEA_CHARS).optional() });
 // Same charset the ids synthesise() hands out use: "steer-<ideaId>" or "pitch-<id>".
 const clipStartedBody = z.object({ clipId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/) });
 
@@ -168,7 +175,7 @@ const falProxy = createRouteHandler({
 const pageDirs = [process.cwd(), import.meta.dirname];
 
 // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
-async function page(file: "index.html" | "broadcaster.html"): Promise<string> {
+async function page(file: "index.html" | "broadcaster.html" | "tv.html"): Promise<string> {
   // Link previews need an absolute URL, and only the server knows where it is published. Read
   // lazily (per request, via watchLink()) rather than at import time — see telegram.ts.
   const publicUrl = watchLink().replace(/\/+$/, "");
@@ -258,10 +265,74 @@ const MAX_VOICE_AUDIO_BYTES = 1_500_000;
 const ACCEPTED_VOICE_TYPES = new Set(["audio/webm", "audio/ogg", "audio/mp4", "audio/wav"]);
 const MIN_HEARD_CHARS = 3;
 
+const recsDeps: RecsDeps = {
+  writeQuery: writeRecsQuery,
+  lookupCandidates,
+  recordTokens: (sceneId, usage) => spend.recordSceneTokens(sceneId, usage),
+};
+
+/** What the concierge is told about "what's on now": the scene on air and its own mood line, for
+ * when a viewer says "like this" or "something like what's on now". */
+function onAirContext(): { text: string; moodLine?: string } | undefined {
+  const now = channel.status().now;
+  if (!now) return undefined;
+  const moodLine = recsStore.get(now.ideaId)?.moodLine;
+  return { text: now.text, ...(moodLine ? { moodLine } : {}) };
+}
+
+const tvAskDeps: TvAskDeps = {
+  transcribe,
+  detailsFor: (about) => detailsById(about.id, about.mediaType),
+  onAirContext,
+  runConcierge: runConciergeLive,
+  synthesise,
+  clipBytes: (clipId) => clip(clipId)?.length ?? 0,
+  // The concierge's "put this on the channel" moment: same moderated path as /say, credited to the
+  // TV itself rather than the viewer, per the spec ("source: voice, name: TV").
+  submitVibe: async (input) => {
+    const outcome = await handleSay(sayDeps, { uid: input.uid, name: "TV", text: input.text, source: "voice" });
+    return { queued: outcome.status === 200 };
+  },
+  recordStt: (audioSeconds) => spend.recordConciergeStt(audioSeconds),
+  recordTokens: (usage) => spend.recordConciergeTokens(usage),
+  recordTts: (audioBytes) => spend.recordConciergeTts(audioBytes),
+};
+
+/** Multipart `about` field is a JSON string of {id, mediaType}; malformed or absent is a miss, not
+ * a fatal error — the ask still proceeds without that context. */
+function parseAbout(raw: FormDataEntryValue | null): TvAskInput["about"] {
+  if (typeof raw !== "string" || !raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "id" in parsed &&
+      "mediaType" in parsed &&
+      typeof parsed.id === "string" &&
+      (parsed.mediaType === "movie" || parsed.mediaType === "tv")
+    ) {
+      return { id: parsed.id, mediaType: parsed.mediaType };
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export const mastra = new Mastra({
   // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
   logger: log,
-  agents: { moderator, sceneWriter, amendWriter, pitchModerator, pitchWriter, showrunner },
+  agents: {
+    moderator,
+    sceneWriter,
+    amendWriter,
+    pitchModerator,
+    pitchWriter,
+    showrunner,
+    recsWriter,
+    concierge,
+  },
   // Channels (Telegram) need storage on the Mastra instance or subscriptions, dedup and approvals
   // reset on every restart. Also backs the showrunner's per-user memory (docs/cards/mastra-nebius).
   storage: new LibSQLStore({ id: "mastra-storage", url: "file:./mastra.db" }),
@@ -293,6 +364,12 @@ export const mastra = new Mastra({
         method: "GET",
         requiresAuth: false,
         handler: async (c) => c.html(await page("broadcaster.html")),
+      }),
+
+      registerApiRoute("/tv.html", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => c.html(await page("tv.html")),
       }),
 
       registerApiRoute("/assets/:file", {
@@ -356,6 +433,21 @@ export const mastra = new Mastra({
         method: "GET",
         requiresAuth: false,
         handler: async (c) => c.json(spend.snapshot()),
+      }),
+
+      // "You might also like": the current scene's picks, for tv.html's rail. Asking is what
+      // builds them (recsStore.ensure) — a channel nobody is watching on tv.html spends nothing on
+      // recs. Empty picks while the first build for a scene is still running, when nothing is on
+      // air, or when nothing verified against the catalog.
+      registerApiRoute("/recs", {
+        method: "GET",
+        requiresAuth: false,
+        handler: async (c) => {
+          const now = channel.status().now;
+          if (!now) return c.json({ sceneId: null, moodLine: "", picks: [] });
+          const recs = recsStore.ensure(recsDeps, now.ideaId, now.prompt);
+          return c.json(recs ?? { sceneId: now.ideaId, moodLine: "", picks: [] });
+        },
       }),
 
       // Public, read-only: the ticker bar public/index.html draws at the bottom of the page.
@@ -461,6 +553,48 @@ export const mastra = new Mastra({
           const stt = audioSeconds === undefined ? undefined : { audioSeconds };
           const outcome = await handleSay(sayDeps, voiceInput, stt);
           return c.json({ ...outcome.body, heard }, outcome.status);
+        },
+      }),
+
+      // multipart/form-data: uid, optional audio, optional text, optional about (JSON
+      // {id, mediaType}). The TV's conversational ask — see concierge.ts's handleTvAsk.
+      registerApiRoute("/tv/ask", {
+        method: "POST",
+        requiresAuth: false,
+        handler: async (c) => {
+          const form = await c.req.formData().catch(() => undefined);
+          const audio = form?.get("audio");
+          const fields = tvAskFields.safeParse({ uid: form?.get("uid"), text: form?.get("text") || undefined });
+          if (!fields.success) return c.json({ ok: false, reason: "Invalid request." }, 400);
+          const hasAudio = audio instanceof Blob;
+          if (!hasAudio && !fields.data.text) {
+            return c.json({ ok: false, reason: "Say or type something first." }, 400);
+          }
+          if (hasAudio) {
+            const declaredType = declaredAudioType(audio);
+            if (!ACCEPTED_VOICE_TYPES.has(declaredType)) {
+              return c.json({ ok: false, reason: `Unsupported audio type: ${declaredType}.` }, 415);
+            }
+            if (audio.size < MIN_VOICE_AUDIO_BYTES || audio.size > MAX_VOICE_AUDIO_BYTES) {
+              return c.json({ ok: false, reason: "Recording is too short or too long." }, 415);
+            }
+          }
+          // Same limiter as /say and /say-voice: every path here costs money on success.
+          const client = clientIp(c);
+          if (client && postTooSoon(client)) {
+            return c.json({ ok: false, reason: "Slow down a little." }, 429);
+          }
+          const about = parseAbout(form?.get("about") ?? null);
+          const input: TvAskInput = {
+            uid: fields.data.uid,
+            ...(hasAudio
+              ? { audio: { bytes: new Uint8Array(await audio.arrayBuffer()), mime: declaredAudioType(audio) } }
+              : {}),
+            ...(fields.data.text ? { text: fields.data.text } : {}),
+            ...(about ? { about } : {}),
+          };
+          const outcome = await handleTvAsk(tvAskDeps, input);
+          return c.json(outcome.body, outcome.status);
         },
       }),
 

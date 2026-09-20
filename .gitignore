@@ -12,3 +12,4 @@ spike/server.log
 mastra.db*
 .claude/
 __pycache__/
+.qa-scratch/

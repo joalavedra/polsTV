@@ -142,15 +142,46 @@ before it is ever stored; a rejection or a moderation error/timeout both refuse 
 image per user at a time, at most one every 15 seconds — a newer accepted photo still replaces the
 older — and the ticker holds at most 12 items. Text messages to the bot are unaffected.
 
+### Recommendations and TV mode
+
+`GET /recs` answers with the scene on air's "you might also like" picks, and asking is also what
+builds them: the first request for a scene asks Nebius to propose real movie and show titles that
+match its mood, verifies each one against a keyless public catalog — TVmaze for series and live TV,
+Wikipedia for films (`catalog.ts`) — and keeps the best 3. A scene lasts 10 seconds. The first poll
+after a scene change answers with an empty list; the next one (1-3 seconds later) has the picks.
+
+Both the main viewer page (`index.html`) and `tv.html` show these picks and both trigger the same
+build: on the main page, a compact "you might also like" section under the queue on desktop
+(`#rail`), or a row under the comments sheet's tabs on mobile and landscape phone (`#panel`),
+fetched when the scene on air changes and retried a few times while the build is still running.
+Cost: recommendations are now built for every scene that airs while at least one viewer has either
+page open — one Nebius call plus up to eight keyless catalog lookups per scene, built once per
+scene however many viewers are polling — where before this change that only happened while a
+`tv.html` was open.
+
+`tv.html` is a 10-foot UI for the same channel: the live picture full-bleed, remote/keyboard
+navigation (arrow keys move focus, Enter/OK activates, Backspace/Escape goes back), and a
+bottom-left "You might also like…" rail.
+
+Hold OK on the Talk button (or hold Space anywhere) to ask the channel for something to watch, by
+voice — release to send, same SLNG transcription the viewer page's mic uses. A `concierge` agent
+(per-viewer memory, so "something lighter than the last one" works) has two tools, `lookupTitles`
+and `whatsOnNow`, and only ever recommends a title one of them actually returned that turn: it
+proposes candidate titles, the catalog verifies them, so it cannot recommend one that doesn't exist.
+A vague ask gets one short follow-up question ("movie or a series?") before it recommends anything.
+Saying "put this on the channel", or the same button on a title's detail screen, submits that mood
+as an idea through the same moderated path as `/say`.
+
 ## Sponsor tech
 
 | Sponsor | What it does here |
 |---|---|
 | **fal — H3 Max Director** | The channel's video: one continuous WebRTC session (`minimax/h3-max/director`), steered live with `prompt` / `prompt_version` messages sent from the broadcaster page — never a pre-rendered clip. |
-| **Nebius Token Factory** | Five jobs through Mastra's `nebius/<model>` router, all on `Qwen/Qwen3-30B-A3B-Instruct-2507`: moderating every idea and nickname, writing the steering prompt that transitions from the current scene, writing an amend's one-thing change, moderating a pitch brief against its own rubric, and writing the ad read shared by the pitch and by any steer whose idea asks for an ad. A sixth job, `nebius/openbmb/MiniCPM-V-4_5`, moderates every ticker photo before it is stored. |
-| **Mastra** | The backend framework: six agents (`moderator`, `sceneWriter`, `amendWriter`, `pitchModerator`, `pitchWriter`, `showrunner`), a Telegram channel via `@chat-adapter/telegram` in polling mode, per-user `Memory` (last 10 messages) on LibSQL storage, and the `registerApiRoute()` custom routes that serve the whole HTTP contract plus both static pages. A voice note to the bot is transcribed before it reaches the showrunner, so every tool works by voice too. |
+| **Nebius Token Factory** | Seven jobs through Mastra's `nebius/<model>` router, all on `Qwen/Qwen3-30B-A3B-Instruct-2507`: moderating every idea and nickname, writing the steering prompt that transitions from the current scene, writing an amend's one-thing change, moderating a pitch brief against its own rubric, writing the ad read shared by the pitch and by any steer whose idea asks for an ad, proposing candidate titles for the scene's "you might also like" rail, and running the TV concierge's conversation. An eighth job, `nebius/openbmb/MiniCPM-V-4_5`, moderates every ticker photo before it is stored. |
+| **Mastra** | The backend framework: eight agents (`moderator`, `sceneWriter`, `amendWriter`, `pitchModerator`, `pitchWriter`, `showrunner`, `recsWriter`, `concierge`), a Telegram channel via `@chat-adapter/telegram` in polling mode, per-user `Memory` (last 10 messages) on LibSQL storage, and the `registerApiRoute()` custom routes that serve the whole HTTP contract plus all three static pages. A voice note to the bot is transcribed before it reaches the showrunner, so every tool works by voice too. |
 | **Vonage Video API** | Fan-out: one routed session. The broadcaster publishes a canvas-plus-WebAudio `MediaStreamTrack` with `OT.initPublisher`; every viewer connects with a subscribe-only token from `GET /viewer-token`. |
-| **SLNG** | `slng/fish/tts:s2.1-pro` on `eu-west.api.slng.ai` synthesises the channel's voice — the ad read for a steer whose idea asks for an ad, and the sponsored ad read from any viewer's pitch — mixed into the published audio one clip at a time, ducking Director's own audio while it plays. Voice notes to the bot are transcribed with SLNG. |
+| **SLNG** | `slng/fish/tts:s2.1-pro` on `eu-west.api.slng.ai` synthesises the channel's voice — the ad read for a steer whose idea asks for an ad, and the sponsored ad read from any viewer's pitch — mixed into the published audio one clip at a time, ducking Director's own audio while it plays. Voice notes to the bot are transcribed with SLNG, and so is every `tv.html` concierge turn, which SLNG then speaks back. |
+| **Titan OS** | `tv.html`: a 10-foot UI for the channel — remote/keyboard navigation, a "you might also like" rail driven by the scene on air (`recs.ts`), and a `concierge` agent (`concierge.ts`) you can talk to for movie/show picks and what's on live TV, by voice or by typing. Catalog data (TVmaze, Wikipedia) is keyless — see `catalog.ts`. |
 | **Galtea** | Adversarial evaluation of the moderator: a SECURITY dataset red-teamed the real-person rule, and the run found it missed a real person when the idea was written in Spanish. Fixed and re-run before/after — see `docs/eval/GALTEA.md`. |
 
 ### Evaluation
@@ -224,14 +255,18 @@ src/mastra/
 ├── index.ts               Routes, Mastra instance, broadcaster-secret gate, fal-proxy wiring
 ├── channel.ts             In-memory state machine: idea queue, steer lifecycle, likes, karma
 ├── pitch.ts               The sponsored voice-over: slot, cooldown, deadline
-├── showrunner.ts          The five Nebius agents: moderation, steering, amends, the pitch and ad
+├── showrunner.ts          The Nebius agents: moderation, steering, amends, the pitch and ad, recs
 ├── announcer.ts           SLNG TTS: synthesises and serves the spoken clips (and their clean lines)
 ├── ad-banner.ts           On-screen AD banner state: which line is airing, until when
 ├── telegram.ts            Telegram channel: showrunner agent, its tools, proactive DMs
 ├── vonage.ts              Vonage session creation and token minting
+├── catalog.ts             Keyless catalog: TVmaze (series, live TV) + Wikipedia (films)
+├── recs.ts                Scene -> "you might also like": writes candidates, verifies, stores
+├── concierge.ts           TV concierge agent + POST tv/ask's dependency-injected route logic
 └── public/
     ├── index.html         Viewer page: video, chat, queue, rank, tap-to-like
-    └── broadcaster.html   Broadcaster: Director session, canvas/audio mix, Vonage publish
+    ├── broadcaster.html   Broadcaster: Director session, canvas/audio mix, Vonage publish
+    └── tv.html            TV mode: 10-foot UI, recs rail, talk-to-the-channel concierge
 ```
 
 Tests are colocated as `*.test.ts` next to the file they cover.
