@@ -874,7 +874,7 @@
     #say-btn:not(:disabled):hover, #splash-tap:hover, .modal-actions button:not(:disabled):hover {
       filter: brightness(1.12);
     }
-    #mic-btn:not(:disabled):hover { filter: brightness(1.12); }
+    #mic-btn:not(:disabled):not([aria-pressed="true"]):hover { background: rgba(255, 255, 255, .12); }
     .sheet-row:hover { background: rgba(255, 255, 255, .06); }
     #spend-close:hover, #drawer-close:hover { background: rgba(255, 255, 255, .12); }
     #share-copy:hover, #share-telegram:hover { color: var(--accent); background: rgba(255, 255, 255, .06); }
@@ -1072,8 +1072,8 @@
     padding: 0;
     border-radius: 50%;
     border: 1px solid var(--panel-border);
-    background: var(--accent);
-    color: #fff;
+    background: rgba(20, 20, 24, .55);
+    color: var(--text);
     font-size: 1.15rem;
     line-height: 1;
     display: flex;
@@ -1082,13 +1082,16 @@
     cursor: pointer;
   }
   #mic-btn:disabled { opacity: .6; cursor: not-allowed; }
-  #mic-btn.recording { background: #d33f3f; animation: mic-pulse 1s ease-in-out infinite; }
+  #mic-btn.recording, #mic-btn[aria-pressed="true"] {
+    background: #d33f3f;
+    animation: mic-pulse 1s ease-in-out infinite;
+  }
   @keyframes mic-pulse {
     0%, 100% { box-shadow: 0 0 0 0 rgba(211, 63, 63, .5); }
     50% { box-shadow: 0 0 0 8px rgba(211, 63, 63, 0); }
   }
   @media (prefers-reduced-motion: reduce) {
-    #mic-btn.recording { animation: none; opacity: .75; }
+    #mic-btn.recording, #mic-btn[aria-pressed="true"] { animation: none; opacity: .75; }
   }
   #mic-status {
     position: absolute;
