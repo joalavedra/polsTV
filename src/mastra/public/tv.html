@@ -451,7 +451,11 @@
     let detailItem = null;
     function openDetail(item) {
       detailItem = item;
-      detailBackdrop.style.backgroundImage = `url(${item.backdropUrl || item.posterUrl})`;
+      // Quoted: poster paths carry literal parentheses ("Alien_(1979)_poster.jpg"), which end an
+      // unquoted url() early and drop the backdrop. Not re-encoded — these arrive percent-encoded
+      // already — so the one character quoting cannot survive is escaped by hand.
+      const backdrop = (item.backdropUrl || item.posterUrl).replaceAll('"', "%22");
+      detailBackdrop.style.backgroundImage = `url("${backdrop}")`;
       detailTitle.textContent = item.title;
       const bits = [];
       if (item.year) bits.push(String(item.year));
@@ -531,6 +535,14 @@
       talkTextInput.value = "";
       applyFocus();
     }
+    // The global dispatcher below hands every key to the input while it has focus, so the only way
+    // back out of the form on a remote is here: Back (Escape) always, Backspace once it is empty.
+    talkTextInput.addEventListener("keydown", (event) => {
+      const backOut = event.key === "Escape" || (event.key === "Backspace" && !talkTextInput.value);
+      if (!backOut) return;
+      event.preventDefault();
+      closeTypedFallback();
+    });
     talkTypeForm.addEventListener("submit", (event) => {
       event.preventDefault();
       const text = talkTextInput.value.trim();
