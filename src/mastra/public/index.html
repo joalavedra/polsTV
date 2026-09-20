@@ -954,6 +954,60 @@
   }
   /* profile:end */
 
+  /* qr:start — static QR to the Telegram bot, desktop-only, overlaid bottom-right of the video.
+     Self-contained, safe to drop in a conflict. The <path> below IS the whole QR (generated once
+     with qrencode, level M, 4-module quiet zone) — no runtime library, no external request. Not
+     given the .chrome class: it must stay visible in pure TV (body.chrome-hidden), unlike the
+     rest of the overlay chrome. */
+  #qr-tile { display: none; }
+  @media (min-width: 821px) and (min-height: 501px) {
+    #qr-tile {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: .35rem;
+      position: fixed;
+      right: calc(var(--side-col-w) + 24px + var(--rail-btn) + 24px);
+      bottom: calc(var(--ticker-h, 0px) + var(--ad-h, 0px) + 16px);
+      z-index: 10;
+      text-decoration: none;
+      transition: bottom .2s ease;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #qr-tile { transition: none; }
+    }
+    /* Pure TV: the side column, rail and banners are gone, so anchor to the window corner. */
+    body.chrome-hidden #qr-tile { right: 24px; bottom: 24px; }
+    #qr-tile-card {
+      display: block;
+      width: 120px;
+      height: 120px;
+      padding: 8px;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+      transition: transform .15s ease;
+    }
+    @media (hover: hover) {
+      #qr-tile:hover #qr-tile-card { transform: translateY(-2px); }
+    }
+    #qr-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 12px; }
+    #qr-tile-svg { display: block; width: 100%; height: 100%; }
+    #qr-tile-caption {
+      font-size: .68rem;
+      font-weight: 700;
+      letter-spacing: .02em;
+      color: #fff;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, .7);
+    }
+  }
+  /* Short desktop windows: shrink the tile (120px card => ~104px QR; 96px card => ~80px QR),
+     same two-tier pattern as #action-rail above, so it never covers the LIVE pill or top bar. */
+  @media (min-width: 821px) and (max-height: 599px) {
+    #qr-tile-card { width: 96px; height: 96px; }
+  }
+  /* qr:end */
+
   #splash, #name-modal {
     position: fixed;
     inset: 0;
@@ -1449,7 +1503,9 @@
        the landscape-phone drawer already does, so mobile portrait keeps showing the whole frame. */
     #subscriber-container video, #subscriber-container object { object-fit: cover !important; }
     #offair-card { border-radius: 12px; }
-    #stage-caption { padding-right: calc(24px + var(--rail-btn) + 16px); }
+    /* +120px (the QR tile's rendered width) +24px (gap): the tile sits left of the rail, further
+       into this corner than the rail alone, so the caption needs that much more clearance too. */
+    #stage-caption { padding-right: calc(24px + var(--rail-btn) + 16px + 120px + 24px); }
     /* The banners overlay the caption's own corner (#video-stage no longer clears them) — shift
        the caption up by whatever is showing: the photo slots (--ticker-h) plus the AD slate
        (--ad-h). Both are 0px while hidden. */
@@ -1495,8 +1551,15 @@
          corner unless given a stacking order of its own (.top-center/.top-right already had one). */
       z-index: 10;
     }
+    /* --logo-w: the logo's rendered width (36px tall, 16:9 => 64px), so the LIVE pill's offset
+       derives from it instead of a magic 68px. If the logo image fails to load, .logo-broken
+       below (set by the img's onerror) zeroes this out and the pill falls back to the same left
+       edge instead of floating in an empty gap. */
+    :root { --logo-w: 64px; }
     .top-logo { display: block; height: 36px; width: auto; border-radius: 8px; }
-    .top-center { top: 14px; left: 68px; max-width: 40vw; }
+    .top-center { top: 14px; left: calc(20px + var(--logo-w) + 10px); max-width: 40vw; }
+    body.logo-broken .top-left { display: none; }
+    body.logo-broken .top-center { left: 20px; }
     #live-sep, #live-viewer-count { display: none; }
     .top-right { top: 14px; right: 20px; }
     #viewer-pill { display: inline-flex; }
@@ -1723,7 +1786,8 @@
     <div id="heart-layer"></div>
 
     <div class="top-left chrome">
-      <img class="top-logo" src="assets/logo.jpg" alt="polsTV" width="120" height="68">
+      <img class="top-logo" src="assets/logo.jpg" alt="polsTV" width="120" height="68"
+        onerror="document.body.classList.add('logo-broken')">
     </div>
 
     <div class="top-center chrome">
@@ -1911,6 +1975,20 @@
       <button type="button" class="sheet-row sheet-close" id="more-close">Close</button>
     </div>
   </div>
+
+  <!-- qr:start — static QR to the Telegram bot, desktop-only. Self-contained, safe to drop in a
+       conflict. role="img" + aria-hidden on the SVG: the link itself carries the aria-label. -->
+  <a id="qr-tile" href="https://t.me/timesquarescreenbot" target="_blank" rel="noopener noreferrer"
+    aria-label="Open the polsTV Telegram bot">
+    <div id="qr-tile-card">
+      <svg id="qr-tile-svg" viewBox="0 0 37 37" role="img" aria-hidden="true">
+        <rect width="37" height="37" fill="#fff"/>
+        <path d="M4,4h1v1h-1zM5,4h1v1h-1zM6,4h1v1h-1zM7,4h1v1h-1zM8,4h1v1h-1zM9,4h1v1h-1zM10,4h1v1h-1zM13,4h1v1h-1zM15,4h1v1h-1zM17,4h1v1h-1zM20,4h1v1h-1zM22,4h1v1h-1zM23,4h1v1h-1zM26,4h1v1h-1zM27,4h1v1h-1zM28,4h1v1h-1zM29,4h1v1h-1zM30,4h1v1h-1zM31,4h1v1h-1zM32,4h1v1h-1zM4,5h1v1h-1zM10,5h1v1h-1zM12,5h1v1h-1zM13,5h1v1h-1zM15,5h1v1h-1zM16,5h1v1h-1zM18,5h1v1h-1zM19,5h1v1h-1zM20,5h1v1h-1zM21,5h1v1h-1zM22,5h1v1h-1zM23,5h1v1h-1zM26,5h1v1h-1zM32,5h1v1h-1zM4,6h1v1h-1zM6,6h1v1h-1zM7,6h1v1h-1zM8,6h1v1h-1zM10,6h1v1h-1zM13,6h1v1h-1zM17,6h1v1h-1zM18,6h1v1h-1zM20,6h1v1h-1zM23,6h1v1h-1zM24,6h1v1h-1zM26,6h1v1h-1zM28,6h1v1h-1zM29,6h1v1h-1zM30,6h1v1h-1zM32,6h1v1h-1zM4,7h1v1h-1zM6,7h1v1h-1zM7,7h1v1h-1zM8,7h1v1h-1zM10,7h1v1h-1zM13,7h1v1h-1zM14,7h1v1h-1zM17,7h1v1h-1zM18,7h1v1h-1zM19,7h1v1h-1zM22,7h1v1h-1zM23,7h1v1h-1zM24,7h1v1h-1zM26,7h1v1h-1zM28,7h1v1h-1zM29,7h1v1h-1zM30,7h1v1h-1zM32,7h1v1h-1zM4,8h1v1h-1zM6,8h1v1h-1zM7,8h1v1h-1zM8,8h1v1h-1zM10,8h1v1h-1zM12,8h1v1h-1zM15,8h1v1h-1zM16,8h1v1h-1zM18,8h1v1h-1zM23,8h1v1h-1zM26,8h1v1h-1zM28,8h1v1h-1zM29,8h1v1h-1zM30,8h1v1h-1zM32,8h1v1h-1zM4,9h1v1h-1zM10,9h1v1h-1zM13,9h1v1h-1zM16,9h1v1h-1zM17,9h1v1h-1zM23,9h1v1h-1zM24,9h1v1h-1zM26,9h1v1h-1zM32,9h1v1h-1zM4,10h1v1h-1zM5,10h1v1h-1zM6,10h1v1h-1zM7,10h1v1h-1zM8,10h1v1h-1zM9,10h1v1h-1zM10,10h1v1h-1zM12,10h1v1h-1zM14,10h1v1h-1zM16,10h1v1h-1zM18,10h1v1h-1zM20,10h1v1h-1zM22,10h1v1h-1zM24,10h1v1h-1zM26,10h1v1h-1zM27,10h1v1h-1zM28,10h1v1h-1zM29,10h1v1h-1zM30,10h1v1h-1zM31,10h1v1h-1zM32,10h1v1h-1zM13,11h1v1h-1zM15,11h1v1h-1zM17,11h1v1h-1zM18,11h1v1h-1zM20,11h1v1h-1zM21,11h1v1h-1zM22,11h1v1h-1zM23,11h1v1h-1zM4,12h1v1h-1zM6,12h1v1h-1zM8,12h1v1h-1zM10,12h1v1h-1zM14,12h1v1h-1zM15,12h1v1h-1zM16,12h1v1h-1zM18,12h1v1h-1zM19,12h1v1h-1zM21,12h1v1h-1zM24,12h1v1h-1zM28,12h1v1h-1zM31,12h1v1h-1zM8,13h1v1h-1zM9,13h1v1h-1zM12,13h1v1h-1zM14,13h1v1h-1zM18,13h1v1h-1zM19,13h1v1h-1zM21,13h1v1h-1zM24,13h1v1h-1zM25,13h1v1h-1zM26,13h1v1h-1zM27,13h1v1h-1zM29,13h1v1h-1zM32,13h1v1h-1zM6,14h1v1h-1zM7,14h1v1h-1zM8,14h1v1h-1zM10,14h1v1h-1zM11,14h1v1h-1zM13,14h1v1h-1zM16,14h1v1h-1zM17,14h1v1h-1zM21,14h1v1h-1zM22,14h1v1h-1zM25,14h1v1h-1zM27,14h1v1h-1zM28,14h1v1h-1zM30,14h1v1h-1zM31,14h1v1h-1zM32,14h1v1h-1zM4,15h1v1h-1zM6,15h1v1h-1zM8,15h1v1h-1zM9,15h1v1h-1zM13,15h1v1h-1zM14,15h1v1h-1zM16,15h1v1h-1zM19,15h1v1h-1zM21,15h1v1h-1zM22,15h1v1h-1zM23,15h1v1h-1zM24,15h1v1h-1zM26,15h1v1h-1zM31,15h1v1h-1zM4,16h1v1h-1zM6,16h1v1h-1zM7,16h1v1h-1zM9,16h1v1h-1zM10,16h1v1h-1zM11,16h1v1h-1zM12,16h1v1h-1zM13,16h1v1h-1zM14,16h1v1h-1zM15,16h1v1h-1zM20,16h1v1h-1zM21,16h1v1h-1zM25,16h1v1h-1zM26,16h1v1h-1zM29,16h1v1h-1zM31,16h1v1h-1zM32,16h1v1h-1zM4,17h1v1h-1zM7,17h1v1h-1zM9,17h1v1h-1zM11,17h1v1h-1zM13,17h1v1h-1zM14,17h1v1h-1zM15,17h1v1h-1zM17,17h1v1h-1zM19,17h1v1h-1zM20,17h1v1h-1zM21,17h1v1h-1zM22,17h1v1h-1zM24,17h1v1h-1zM26,17h1v1h-1zM29,17h1v1h-1zM32,17h1v1h-1zM4,18h1v1h-1zM7,18h1v1h-1zM8,18h1v1h-1zM10,18h1v1h-1zM11,18h1v1h-1zM12,18h1v1h-1zM18,18h1v1h-1zM19,18h1v1h-1zM20,18h1v1h-1zM21,18h1v1h-1zM22,18h1v1h-1zM25,18h1v1h-1zM26,18h1v1h-1zM27,18h1v1h-1zM28,18h1v1h-1zM29,18h1v1h-1zM31,18h1v1h-1zM32,18h1v1h-1zM7,19h1v1h-1zM9,19h1v1h-1zM11,19h1v1h-1zM14,19h1v1h-1zM15,19h1v1h-1zM17,19h1v1h-1zM18,19h1v1h-1zM20,19h1v1h-1zM21,19h1v1h-1zM23,19h1v1h-1zM25,19h1v1h-1zM28,19h1v1h-1zM29,19h1v1h-1zM31,19h1v1h-1zM4,20h1v1h-1zM8,20h1v1h-1zM9,20h1v1h-1zM10,20h1v1h-1zM14,20h1v1h-1zM18,20h1v1h-1zM19,20h1v1h-1zM20,20h1v1h-1zM21,20h1v1h-1zM25,20h1v1h-1zM26,20h1v1h-1zM29,20h1v1h-1zM31,20h1v1h-1zM32,20h1v1h-1zM6,21h1v1h-1zM7,21h1v1h-1zM8,21h1v1h-1zM12,21h1v1h-1zM13,21h1v1h-1zM15,21h1v1h-1zM16,21h1v1h-1zM18,21h1v1h-1zM19,21h1v1h-1zM21,21h1v1h-1zM24,21h1v1h-1zM25,21h1v1h-1zM26,21h1v1h-1zM29,21h1v1h-1zM30,21h1v1h-1zM32,21h1v1h-1zM4,22h1v1h-1zM6,22h1v1h-1zM10,22h1v1h-1zM12,22h1v1h-1zM15,22h1v1h-1zM17,22h1v1h-1zM20,22h1v1h-1zM31,22h1v1h-1zM32,22h1v1h-1zM5,23h1v1h-1zM6,23h1v1h-1zM7,23h1v1h-1zM8,23h1v1h-1zM12,23h1v1h-1zM19,23h1v1h-1zM20,23h1v1h-1zM21,23h1v1h-1zM22,23h1v1h-1zM28,23h1v1h-1zM29,23h1v1h-1zM31,23h1v1h-1zM4,24h1v1h-1zM6,24h1v1h-1zM9,24h1v1h-1zM10,24h1v1h-1zM11,24h1v1h-1zM12,24h1v1h-1zM16,24h1v1h-1zM21,24h1v1h-1zM24,24h1v1h-1zM25,24h1v1h-1zM26,24h1v1h-1zM27,24h1v1h-1zM28,24h1v1h-1zM12,25h1v1h-1zM13,25h1v1h-1zM14,25h1v1h-1zM17,25h1v1h-1zM20,25h1v1h-1zM21,25h1v1h-1zM24,25h1v1h-1zM28,25h1v1h-1zM30,25h1v1h-1zM31,25h1v1h-1zM32,25h1v1h-1zM4,26h1v1h-1zM5,26h1v1h-1zM6,26h1v1h-1zM7,26h1v1h-1zM8,26h1v1h-1zM9,26h1v1h-1zM10,26h1v1h-1zM13,26h1v1h-1zM18,26h1v1h-1zM23,26h1v1h-1zM24,26h1v1h-1zM26,26h1v1h-1zM28,26h1v1h-1zM29,26h1v1h-1zM31,26h1v1h-1zM32,26h1v1h-1zM4,27h1v1h-1zM10,27h1v1h-1zM14,27h1v1h-1zM15,27h1v1h-1zM17,27h1v1h-1zM18,27h1v1h-1zM20,27h1v1h-1zM21,27h1v1h-1zM22,27h1v1h-1zM24,27h1v1h-1zM28,27h1v1h-1zM29,27h1v1h-1zM31,27h1v1h-1zM4,28h1v1h-1zM6,28h1v1h-1zM7,28h1v1h-1zM8,28h1v1h-1zM10,28h1v1h-1zM12,28h1v1h-1zM14,28h1v1h-1zM15,28h1v1h-1zM18,28h1v1h-1zM19,28h1v1h-1zM20,28h1v1h-1zM21,28h1v1h-1zM24,28h1v1h-1zM25,28h1v1h-1zM26,28h1v1h-1zM27,28h1v1h-1zM28,28h1v1h-1zM32,28h1v1h-1zM4,29h1v1h-1zM6,29h1v1h-1zM7,29h1v1h-1zM8,29h1v1h-1zM10,29h1v1h-1zM14,29h1v1h-1zM15,29h1v1h-1zM18,29h1v1h-1zM20,29h1v1h-1zM27,29h1v1h-1zM28,29h1v1h-1zM30,29h1v1h-1zM31,29h1v1h-1zM32,29h1v1h-1zM4,30h1v1h-1zM6,30h1v1h-1zM7,30h1v1h-1zM8,30h1v1h-1zM10,30h1v1h-1zM12,30h1v1h-1zM13,30h1v1h-1zM14,30h1v1h-1zM15,30h1v1h-1zM17,30h1v1h-1zM20,30h1v1h-1zM21,30h1v1h-1zM23,30h1v1h-1zM24,30h1v1h-1zM28,30h1v1h-1zM29,30h1v1h-1zM32,30h1v1h-1zM4,31h1v1h-1zM10,31h1v1h-1zM21,31h1v1h-1zM23,31h1v1h-1zM24,31h1v1h-1zM26,31h1v1h-1zM27,31h1v1h-1zM31,31h1v1h-1zM4,32h1v1h-1zM5,32h1v1h-1zM6,32h1v1h-1zM7,32h1v1h-1zM8,32h1v1h-1zM9,32h1v1h-1zM10,32h1v1h-1zM12,32h1v1h-1zM16,32h1v1h-1zM17,32h1v1h-1zM20,32h1v1h-1zM21,32h1v1h-1zM23,32h1v1h-1zM24,32h1v1h-1zM25,32h1v1h-1zM26,32h1v1h-1zM27,32h1v1h-1zM28,32h1v1h-1zM29,32h1v1h-1zM31,32h1v1h-1zM32,32h1v1h-1z" fill="#000"/>
+      </svg>
+    </div>
+    <span id="qr-tile-caption">@timesquarescreenbot</span>
+  </a>
+  <!-- qr:end -->
 
   <!-- profile:start — per-viewer HISTORY sheet: click a name anywhere to see the scenes they've
        put on air. Self-contained, safe to drop in a conflict. -->
