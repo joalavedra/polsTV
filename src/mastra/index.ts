@@ -23,18 +23,17 @@ import {
   MAX_PITCH_BRIEF_CHARS,
   moderate,
   moderator,
-  narrator,
   pitchModerator,
   pitchWriter,
   recsWriter,
   sceneWriter,
+  writeAdRead,
   writeAmend,
   writeRecsQuery,
   writeSteer,
-  writeVoiceOver,
 } from "./showrunner";
-import type { TokenUsage } from "./spend";
 import { spend } from "./spend";
+import { decideSteerVoice, SILENT_VOICE, type SteerVoiceDeps } from "./steer-voice";
 import { notifyPitchDropped, notifySceneChange, showrunner } from "./telegram";
 import { ticker } from "./ticker";
 import { transcribe } from "./transcriber";
@@ -66,30 +65,8 @@ function accrueHeartbeat(directorOpen: boolean): void {
   });
 }
 
-interface SteerVoice {
-  usage: TokenUsage;
-  clipId: string | undefined;
-  url: string | undefined;
-}
-
-const ZERO_USAGE: TokenUsage = { inputTokens: 0, outputTokens: 0 };
-
-/**
- * The line the channel's voice reads over the scene a steer is about to bring up: written by the
- * narrator, then synthesised by SLNG. The clip is garnish — a TTS failure is logged and the steer
- * goes out silent rather than late.
- */
-async function narrateSteer(idea: Idea): Promise<SteerVoice> {
-  const voiceOver = await writeVoiceOver(idea.name, idea.text);
-  try {
-    const clipId = await synthesise(`steer-${idea.id}`, voiceOver.line);
-    // Page-relative, so it still resolves when the app is served under a path prefix.
-    return { usage: voiceOver.usage, clipId, url: `announcer/${clipId}` };
-  } catch (error) {
-    console.error(`announcer failed for idea ${idea.id}, steering without it:`, error);
-    return { usage: voiceOver.usage, clipId: undefined, url: undefined };
-  }
-}
+// The real wiring for steer-voice.ts's decideSteerVoice(): Nebius's ad writer, SLNG's synthesise.
+const steerVoiceDeps: SteerVoiceDeps = { writeAdRead, synthesise };
 
 // Web callers may not claim a "telegram:" uid; those only come from the Telegram channel.
 const uid = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);
@@ -134,6 +111,21 @@ const pitchStatus = {
   rejected: 422,
   unavailable: 503,
 } as const;
+
+/**
+ * Let go of a steer the broadcaster never reported on. Its `steer-result` POST was lost — the
+ * page reloaded, the server restarted under it, Director went quiet — and without this the
+ * channel sits on that one steer and no idea ever airs again.
+ */
+function expireStaleSteer(): void {
+  const abandoned = channel.expireStaleSteer();
+  if (!abandoned) return;
+  console.warn(
+    `steer ${abandoned.steerId} (idea ${abandoned.ideaId}) was never reported on; dropping it ` +
+      `so the queue can move. The broadcaster page may have reloaded or lost the server.`,
+  );
+  spend.markNotAired(abandoned.ideaId);
+}
 
 /** Drop pitches the broadcaster never collected and tell whoever submitted them. */
 function sweepPitches(): void {
@@ -332,7 +324,6 @@ export const mastra = new Mastra({
     moderator,
     sceneWriter,
     amendWriter,
-    narrator,
     pitchModerator,
     pitchWriter,
     showrunner,
@@ -454,8 +445,9 @@ export const mastra = new Mastra({
         },
       }),
 
-      // Public, read-only: the ticker bar broadcaster.html draws. Images arrive over Telegram
-      // (telegram.ts's onDirectMessage); these just serve what's currently on it.
+      // Public, read-only: the ticker bar public/index.html draws at the bottom of the page.
+      // Images arrive over Telegram (telegram.ts's onDirectMessage); these just serve what's
+      // currently on it.
       registerApiRoute("/ticker", {
         method: "GET",
         requiresAuth: false,
@@ -641,6 +633,7 @@ export const mastra = new Mastra({
           // ?director=1 while a Director session is open (broadcaster.html); this poll is also the
           // broadcaster's heartbeat, so bill it every time regardless of what it returns below.
           accrueHeartbeat(c.req.query("director") === "1");
+          expireStaleSteer();
           sweepPitches();
           // Rides along with whatever this poll was going to answer, including a 204 with nothing
           // else in it. The broadcaster queues it behind any clip already playing.
@@ -653,16 +646,17 @@ export const mastra = new Mastra({
           }
           writingSteer = true;
           try {
-            // An amend is a small on-screen tweak: no narrated "up next" clip for it (that voice
-            // call itself costs Nebius tokens, not just the TTS) — a voice line for every small
-            // tweak would talk over the show.
-            const noVoice: SteerVoice = { usage: ZERO_USAGE, clipId: undefined, url: undefined };
+            // An amend is a small on-screen tweak: never worth an ad read even if its text happens
+            // to ask for one — it isn't a NEW idea for the channel to air.
             const [steerWrite, voice] = await Promise.all([
               writeForIdea(idea, channel.status().now?.prompt),
-              idea.kind === "amend" ? noVoice : narrateSteer(idea),
+              idea.kind === "amend" ? SILENT_VOICE : decideSteerVoice(steerVoiceDeps, idea),
             ]);
             spend.recordSteerWrite(idea.id, idea.name, idea.text, steerWrite.usage);
-            if (idea.kind !== "amend") {
+            // A non-ad idea, an amend, or a failed/timed-out ad write all carry zero usage: skip
+            // the record so a silent steer never inflates the Nebius call count with a call that
+            // never happened.
+            if (voice.usage.inputTokens > 0 || voice.usage.outputTokens > 0) {
               spend.recordSteerWrite(idea.id, idea.name, idea.text, voice.usage);
             }
             if (voice.clipId) {

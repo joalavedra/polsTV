@@ -125,7 +125,14 @@
     audio: { ctx: undefined, destination: undefined, directorGain: undefined },
     videoTrack: undefined,
     audioTrack: undefined,
-    vonage: { session: undefined, publisher: undefined, publishing: false, reconnectAttempts: 0 },
+    serverSeenAt: 0, // last next-steer poll that got an answer, so a reload cannot land on a dead server
+    vonage: {
+      session: undefined,
+      publisher: undefined,
+      publishing: false,
+      reconnectAttempts: 0,
+      downSince: undefined, // when the picture stopped reaching Vonage, for watchPublish
+    },
     director: {
       session: undefined,
       fal: undefined,
@@ -146,6 +153,10 @@
   function log(type, data) {
     const time = new Date().toISOString().slice(11, 19);
     const line = `${time} ${type} ${JSON.stringify(data ?? {})}`;
+    // In production this page is a headless tab nobody can open. The console is the only way its
+    // log reaches the operator; scripts/start.sh runs Chrome with --enable-logging=stderr so it
+    // lands in the same stream as the server's own output.
+    console.log(`broadcaster ${line}`);
     const row = document.createElement("div");
     row.textContent = line;
     els.log.appendChild(row);
@@ -211,17 +222,15 @@
       const dh = h * drift;
       ctx.drawImage(identLogo, (w - dw) / 2, (h - dh) / 2, dw, dh);
     }
-    // Moved up clear of the ticker bar when it has items, so the two never overlap.
-    const bandFloor = h - (state.ticker.items.length > 0 ? TICKER_BAR_HEIGHT : 0);
     ctx.fillStyle = "rgba(10, 10, 15, 0.78)";
-    ctx.fillRect(0, bandFloor - 120, w, 120);
+    ctx.fillRect(0, h - 120, w, 120);
     ctx.textAlign = "center";
     ctx.font = "bold 34px system-ui, sans-serif";
     ctx.fillStyle = "#ffffff";
-    ctx.fillText("send an idea to wake the channel", w / 2, bandFloor - 68);
+    ctx.fillText("send an idea to wake the channel", w / 2, h - 68);
     ctx.font = "20px monospace";
     ctx.fillStyle = "#c8c8d8";
-    ctx.fillText(new Date().toLocaleTimeString(), w / 2, bandFloor - 30);
+    ctx.fillText(new Date().toLocaleTimeString(), w / 2, h - 30);
     if (state.ident.lastPrompt) {
       ctx.fillStyle = "rgba(10, 10, 15, 0.78)";
       ctx.fillRect(0, 0, w, 110);
@@ -229,7 +238,6 @@
       ctx.fillStyle = "#55dd88";
       wrapText(ctx, state.ident.lastPrompt, w / 2, 36, w - 160, 24);
     }
-    drawTickerBar(ctx, w, h);
   }
 
   function startIdentLoop() {
@@ -245,15 +253,17 @@
   function drawDirectorFrame(video) {
     const ctx = els.stage.getContext("2d");
     ctx.drawImage(video, 0, 0, els.stage.width, els.stage.height);
-    drawTickerBar(ctx, els.stage.width, els.stage.height);
   }
 
   function scheduleDirectorFrame(video) {
     const draw = () => {
       if (state.director.activeVideo !== video) return; // superseded (rotation/teardown), stop
       drawDirectorFrame(video);
+      // Never requestAnimationFrame: a headless tab has no display link (the production log's
+      // CVDisplayLinkCreateWithCGDisplay failures) and rAF stops dead without one, which would
+      // freeze the published picture on its last frame. rVFC and timers both keep firing.
       if ("requestVideoFrameCallback" in video) video.requestVideoFrameCallback(draw);
-      else requestAnimationFrame(draw);
+      else setTimeout(draw, 1000 / 24);
     };
     draw();
   }
@@ -271,135 +281,6 @@
 
   function grabCanvasBlob() {
     return new Promise((resolve) => els.stage.toBlob(resolve, "image/jpeg", 0.85));
-  }
-
-  // ---- ticker: Telegram photo crawl along the bottom of the broadcast picture -------------
-  // Polls GET ticker every 10s; drawTickerBar() is called every frame from drawDirectorFrame()
-  // and drawIdentFrame() below. Scroll position comes from performance.now(), never a per-frame
-  // counter, so it neither speeds up nor stutters when the frame rate changes.
-
-  const TICKER_BAR_HEIGHT = 76;
-  const TICKER_SCROLL_PX_PER_SEC = 60;
-  const TICKER_THUMB_SIZE = 64;
-  const TICKER_THUMB_PAD = 12;
-  const TICKER_SLOT_WIDTH = 320;
-  const TICKER_TEXT_MAX_WIDTH = TICKER_SLOT_WIDTH - TICKER_THUMB_SIZE - TICKER_THUMB_PAD - 24;
-  const TICKER_POLL_MS = 10_000;
-
-  state.ticker = { items: [], render: new Map(), pollBusy: false };
-
-  /** Binary search so a long caption costs ~6 measureText calls, not one per character. */
-  function ellipsise(ctx, text, maxWidth) {
-    if (ctx.measureText(text).width <= maxWidth) return text;
-    let lo = 0;
-    let hi = text.length;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (ctx.measureText(text.slice(0, mid) + "…").width <= maxWidth) lo = mid;
-      else hi = mid - 1;
-    }
-    return text.slice(0, lo) + "…";
-  }
-
-  /** Decodes the image and pre-ellipsises its text once per item id; every later frame just
-   * reads this cached entry back out instead of re-measuring text or re-creating the Image. */
-  function tickerRenderFor(item) {
-    let entry = state.ticker.render.get(item.id);
-    if (entry) return entry;
-    const img = new Image();
-    img.src = item.url; // page-relative: resolves under a path prefix (site.com/polstv/) too
-    const ctx = els.stage.getContext("2d");
-    ctx.font = "bold 18px system-ui, sans-serif";
-    const name = ellipsise(ctx, item.name, TICKER_TEXT_MAX_WIDTH);
-    ctx.font = "16px system-ui, sans-serif";
-    const caption = item.caption ? ellipsise(ctx, item.caption, TICKER_TEXT_MAX_WIDTH) : "";
-    entry = { img, name, caption };
-    state.ticker.render.set(item.id, entry);
-    return entry;
-  }
-
-  async function pollTickerInner() {
-    let data;
-    try {
-      data = await fetchJson("ticker");
-    } catch (e) {
-      return log("ticker_poll_failed", { message: String(e) });
-    }
-    state.ticker.items = data.items;
-    const seen = new Set(data.items.map((item) => item.id));
-    for (const id of state.ticker.render.keys()) {
-      if (!seen.has(id)) state.ticker.render.delete(id);
-    }
-    for (const item of data.items) tickerRenderFor(item);
-  }
-
-  async function pollTicker() {
-    if (state.ticker.pollBusy) return;
-    state.ticker.pollBusy = true;
-    try {
-      await pollTickerInner();
-    } finally {
-      state.ticker.pollBusy = false;
-    }
-  }
-
-  /** Centre-cropped (source rectangle) 64x64 thumbnail with rounded corners via a clip path. */
-  function drawTickerThumb(ctx, img, x, y) {
-    if (!img.complete || img.naturalWidth === 0) return;
-    const side = Math.min(img.naturalWidth, img.naturalHeight);
-    const sx = (img.naturalWidth - side) / 2;
-    const sy = (img.naturalHeight - side) / 2;
-    const radius = 10;
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(x + radius, y);
-    ctx.arcTo(x + TICKER_THUMB_SIZE, y, x + TICKER_THUMB_SIZE, y + TICKER_THUMB_SIZE, radius);
-    ctx.arcTo(x + TICKER_THUMB_SIZE, y + TICKER_THUMB_SIZE, x, y + TICKER_THUMB_SIZE, radius);
-    ctx.arcTo(x, y + TICKER_THUMB_SIZE, x, y, radius);
-    ctx.arcTo(x, y, x + TICKER_THUMB_SIZE, y, radius);
-    ctx.closePath();
-    ctx.clip();
-    ctx.drawImage(img, sx, sy, side, side, x, y, TICKER_THUMB_SIZE, TICKER_THUMB_SIZE);
-    ctx.restore();
-  }
-
-  function drawTickerItem(ctx, item, x, y) {
-    const { img, name, caption } = tickerRenderFor(item);
-    drawTickerThumb(ctx, img, x, y);
-    const textX = x + TICKER_THUMB_SIZE + TICKER_THUMB_PAD;
-    ctx.textAlign = "left";
-    ctx.textBaseline = "alphabetic";
-    ctx.font = "bold 18px system-ui, sans-serif";
-    ctx.fillStyle = "#ffffff";
-    ctx.fillText(name, textX, y + 30);
-    if (caption) {
-      ctx.font = "16px system-ui, sans-serif";
-      ctx.fillStyle = "#cfcfd8";
-      ctx.fillText(caption, textX, y + 52);
-    }
-  }
-
-  /**
-   * Draws the 76px bottom bar for one frame: a semi-opaque strip with items scrolling
-   * right-to-left in an endless loop (the item list repeats via modulo indexing, so the bar
-   * never looks empty-ish with only one or two items). Draws nothing when the ticker is empty.
-   */
-  function drawTickerBar(ctx, w, h) {
-    const items = state.ticker.items;
-    if (items.length === 0) return;
-    const barTop = h - TICKER_BAR_HEIGHT;
-    ctx.fillStyle = "rgba(8, 8, 12, 0.82)";
-    ctx.fillRect(0, barTop, w, TICKER_BAR_HEIGHT);
-
-    const scrolled = (performance.now() / 1000) * TICKER_SCROLL_PX_PER_SEC;
-    const thumbY = barTop + (TICKER_BAR_HEIGHT - TICKER_THUMB_SIZE) / 2;
-    const startK = Math.floor(scrolled / TICKER_SLOT_WIDTH) - 1;
-    for (let k = startK; ; k += 1) {
-      const x = k * TICKER_SLOT_WIDTH - scrolled;
-      if (x >= w) break;
-      const index = ((k % items.length) + items.length) % items.length;
-      drawTickerItem(ctx, items[index], x, thumbY);
-    }
   }
 
   // ---- audio graph: always exists once started, Director's track feeds in via a gain node ---
@@ -533,6 +414,14 @@
       },
     );
     state.vonage.publisher = publisher;
+    // Vonage can kill just our stream — a network change, an ICE restart that never lands — and
+    // leave the session connected. Nothing else notices, so the picture stops while the page
+    // still reads as healthy and keeps heartbeating. watchPublish picks it up from here.
+    publisher.on("streamDestroyed", (event) => {
+      if (state.vonage.publisher !== publisher) return; // a superseded publisher's goodbye
+      state.vonage.publishing = false;
+      log("vonage_stream_destroyed", { reason: event.reason });
+    });
     session.publish(publisher, (error) => {
       if (error) {
         state.vonage.publishing = false;
@@ -542,6 +431,29 @@
         log("vonage_publishing", {});
       }
     });
+  }
+
+  // Everything above reports its own failure and stops: a publish that failed is never retried,
+  // and a stream the network kills under a still-connected session is not noticed at all —
+  // measured, the page kept polling, the server kept saying live, and every viewer waited on a
+  // picture that was never coming. Recovering in place means rebuilding the canvas capture, the
+  // audio graph and the session (OT's destroy stops the tracks all three share, so a republish
+  // on the old ones fails "unable to get access to your microphone"). A reload does all of it
+  // and cannot leave half-dead media behind, and ?autostart=1 brings the page straight back.
+  const RELOAD_AFTER_MS = 60_000;
+
+  function watchPublish() {
+    if (state.vonage.publishing) {
+      state.vonage.downSince = undefined;
+      return;
+    }
+    state.vonage.downSince ??= Date.now();
+    const downMs = Date.now() - state.vonage.downSince;
+    // Only while the server is answering: a reload during its restart would land on a refused
+    // connection and leave a dead page no supervisor can tell apart from a working one.
+    if (downMs < RELOAD_AFTER_MS || Date.now() - state.serverSeenAt > 15_000) return;
+    log("vonage_down_reloading", { downMs });
+    location.reload();
   }
 
   function scheduleVonageReconnect() {
@@ -562,6 +474,7 @@
     const session = OT.initSession(token.applicationId, token.sessionId);
     state.vonage.session = session;
     session.on("sessionDisconnected", () => {
+      if (state.vonage.session !== session) return; // a superseded session's goodbye
       log("vonage_disconnected", {});
       state.vonage.publisher = undefined;
       state.vonage.publishing = false;
@@ -853,6 +766,7 @@
     } catch (e) {
       return log("next_steer_failed", { message: String(e) });
     }
+    state.serverSeenAt = Date.now();
     if (res.status === 204) return;
     if (!res.ok) return log("next_steer_error", { status: res.status });
     const steer = await res.json();
@@ -912,6 +826,7 @@
   function tickClock() {
     updateOperatorUi();
     maybeRotate();
+    watchPublish();
   }
 
   // ---- boot ---------------------------------------------------------------------------------
@@ -928,9 +843,7 @@
     setInterval(pollNextSteer, 3000);
     setInterval(pollStatusForIdle, 5000);
     setInterval(tickClock, 1000);
-    setInterval(pollTicker, TICKER_POLL_MS);
     pollNextSteer();
-    pollTicker();
     log("started", {});
   }
 

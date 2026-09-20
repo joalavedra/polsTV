@@ -62,6 +62,14 @@ trap cleanup EXIT
 # the EXIT trap above instead of letting them be orphaned or SIGKILLed after the grace period.
 trap 'exit 143' TERM
 
+# macOS only: the broadcaster is a headless tab on someone's laptop, and an idle machine that
+# sleeps takes the whole channel off the air. `-w $$` ties the assertion to this script, so it
+# lifts the moment the run ends and nobody has to remember to stop it.
+if [[ "$(uname -s)" == "Darwin" ]] && command -v caffeinate >/dev/null; then
+  caffeinate -dims -w "$$" &
+  echo "start.sh: holding the machine awake (caffeinate -dims)"
+fi
+
 echo "start.sh: starting server ($server_entry) on port $port"
 PORT="$port" node "$server_entry" &
 server_pid=$!
@@ -97,6 +105,10 @@ chrome_args=(
   # (src/mastra/public/broadcaster.html, publishToVonage). Verify per docs/DEPLOY.md that this
   # actually yields a running AudioContext, not just a started one.
   --autoplay-policy=no-user-gesture-required
+  # The broadcaster page's operator log is a <div> in a tab nobody can open. It also writes every
+  # line to the console, and this is what puts that console in our stderr — otherwise a page that
+  # stopped publishing, or lost Director, fails entirely in private.
+  --enable-logging=stderr
   --no-first-run
   --disable-dev-shm-usage
   --user-data-dir="$user_data_dir"

@@ -1,15 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   capWords,
+  isAdIdea,
   MAX_AD_READ_WORDS,
-  MAX_VOICE_OVER_WORDS,
-  narrator,
   normalizeForModeration,
   pitchWriter,
   spokenText,
   stripUrlLike,
   writeAdRead,
-  writeVoiceOver,
 } from "./showrunner";
 
 /** A Mastra `generate()` result, trimmed to the two fields these writers read. */
@@ -91,38 +89,59 @@ describe("capWords", () => {
   it("does not leave dangling punctuation at the cut", () => {
     expect(capWords("one two three, four five", 3)).toBe("one two three.");
   });
-});
 
-describe("writeVoiceOver", () => {
-  it("credits the viewer and caps the narrator's line at the spoken word limit", async () => {
-    const long = "the capybara stirs the soup with an ancient and unhurried patience ".repeat(4);
-    vi.spyOn(narrator, "generate").mockResolvedValue(reply(long) as never);
-    const { line, usage } = await writeVoiceOver("Timba", "a clay capybara stirs soup");
-    expect(line.startsWith("From Timba. ")).toBe(true);
-    expect(wordCount(line.slice("From Timba. ".length))).toBeLessThanOrEqual(MAX_VOICE_OVER_WORDS);
-    expect(usage).toEqual({ inputTokens: 40, outputTokens: 20 });
-  });
-
-  it("falls back to the plain read when the narrator fails, charging nothing", async () => {
-    vi.spyOn(narrator, "generate").mockRejectedValue(new Error("nebius down"));
-    const { line, usage } = await writeVoiceOver("Ana", "a cat on a boat");
-    expect(line).toBe("Up next, from Ana: a cat on a boat");
-    expect(usage).toEqual({ inputTokens: 0, outputTokens: 0 });
-  });
-
-  it("falls back to the plain read when the narrator answers with nothing", async () => {
-    vi.spyOn(narrator, "generate").mockResolvedValue(reply('  ""  ') as never);
-    expect((await writeVoiceOver("Ana", "a cat on a boat")).line).toBe(
-      "Up next, from Ana: a cat on a boat",
+  it("keeps the tagline sentence for a realistic ad, dropping trailing fluff after it", () => {
+    const ad =
+      "Bored yet? Croak Crunch is hand rolled by frogs at midnight. " +
+      "One bite and the whole pond hears about it. " +
+      "Croak Crunch: snacking, ribbited. " +
+      "Tell every lily pad tonight";
+    expect(capWords(ad, MAX_AD_READ_WORDS)).toBe(
+      "Bored yet? Croak Crunch is hand rolled by frogs at midnight. " +
+        "One bite and the whole pond hears about it. " +
+        "Croak Crunch: snacking, ribbited.",
     );
   });
+});
 
-  it("falls back to the plain read rather than hold the steer for a hung narrator", async () => {
-    vi.useFakeTimers();
-    vi.spyOn(narrator, "generate").mockReturnValue(new Promise(() => {}) as never);
-    const pending = writeVoiceOver("Ana", "a cat on a boat");
-    await vi.advanceTimersByTimeAsync(4_000);
-    expect((await pending).line).toBe("Up next, from Ana: a cat on a boat");
+describe("isAdIdea", () => {
+  const positive: Array<[string, string]> = [
+    ["bare 'ad'", "make an ad for my invented shoe brand"],
+    ["'ads' plural", "cut together some ads for the frog shop"],
+    ["'advert'", "write an advert for a lemonade stand"],
+    ["'advertisement'", "an advertisement for a haunted vacuum"],
+    ["'advertising'", "some advertising for a snail delivery service"],
+    ["'commercial'", "a commercial for glow-in-the-dark socks"],
+    ["'sponsored'", "a sponsored segment for a duck detective agency"],
+    ["'promo'", "a promo for the world's slowest gym"],
+    ["'tv spot'", "a tv spot for a cloud rental company"],
+    ["'jingle'", "a jingle for a mattress made of moss"],
+    ["mixed case", "make an AD for my shoe"],
+    ["punctuation-adjacent: 'AD!'", "AD! for a robot butler"],
+    ["punctuation-adjacent: comma", "an ad, please, for a mime school"],
+    ["ca: anunci", "un anunci de sabates voladores"],
+    ["ca: publicitat", "publicitat d'un paraigua invisible"],
+    ["ca: patrocinat, accented neighbour", "un vídeo patrocinat, però és fals, adéu"],
+    ["es: anuncio", "un anuncio de zapatos que ladran"],
+    ["es: publicidad", "publicidad de un paraguas invisible"],
+    ["es: patrocinado, accented neighbour", "un anuncio patrocinado, según él, adiós"],
+  ];
+  it.each(positive)("fires on %s", (_label, text) => {
+    expect(isAdIdea(text)).toBe(true);
+  });
+
+  const negative: Array<[string, string]> = [
+    ["empty string", ""],
+    ["'add'", "please add a hat to the cat"],
+    ["'bad'", "a bad idea about clowns in the rain"],
+    ["'adventure'", "an adventure through a jungle of jelly"],
+    ["'shadow'", "a shadow puppet show behind a curtain"],
+    ["'radio'", "an old radio plays jazz in the attic"],
+    ["'madrid'", "a train quietly arrives in madrid at dawn"],
+    ["'adiós'", "the cat waves a paw and says adiós"],
+  ];
+  it.each(negative)("does not fire on %s", (_label, text) => {
+    expect(isAdIdea(text)).toBe(false);
   });
 });
 
@@ -132,11 +151,10 @@ describe("writeAdRead", () => {
       .repeat(3);
     vi.spyOn(pitchWriter, "generate").mockResolvedValue(reply(long) as never);
     const { line } = await writeAdRead("Timba", "sell my lemonade stand");
-    expect(line.startsWith("A word from Timba. ")).toBe(true);
+    const credit = "A word from Timba. ";
+    expect(line.startsWith(credit)).toBe(true);
     expect(line).not.toMatch(/shop\.com/);
-    expect(wordCount(line.slice("A word from Timba. ".length))).toBeLessThanOrEqual(
-      MAX_AD_READ_WORDS,
-    );
+    expect(wordCount(line.slice(credit.length))).toBeLessThanOrEqual(MAX_AD_READ_WORDS);
   });
 
   it("throws rather than send an empty ad read to the voice", async () => {

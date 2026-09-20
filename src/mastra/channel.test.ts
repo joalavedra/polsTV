@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Channel, MAX_AMENDS_PER_SCENE, STEER_GAP_MS } from "./channel";
+import { Channel, MAX_AMENDS_PER_SCENE, STEER_GAP_MS, STEER_TIMEOUT_MS } from "./channel";
 
 function setup() {
   let clock = 1_000_000;
@@ -115,6 +115,47 @@ describe("steering", () => {
     expect(status.now?.text).toBe("a cat");
     expect(status.queue).toHaveLength(0);
     expect(status.steering).toBeNull();
+  });
+
+  it("holds an in-flight steer until it times out, then lets the queue move", () => {
+    const ctx = setup();
+    const added = ctx.say("ana", "a cat");
+    if (!added.ok) throw new Error("setup failed");
+    ctx.tick(STEER_GAP_MS);
+    const steer = ctx.channel.beginSteer(added.idea.id, "p");
+    ctx.tick(STEER_TIMEOUT_MS - 1);
+    expect(ctx.channel.expireStaleSteer()).toBeUndefined();
+    expect(ctx.channel.canSteer()).toBe(false);
+    ctx.tick(1);
+    expect(ctx.channel.expireStaleSteer()).toEqual(steer);
+    // Reported once, so the caller cannot file its cost or log it twice.
+    expect(ctx.channel.expireStaleSteer()).toBeUndefined();
+    expect(ctx.channel.canSteer()).toBe(true);
+    expect(ctx.channel.status().steering).toBeNull();
+    expect(ctx.channel.status().queue).toHaveLength(0);
+    expect(ctx.say("ana", "a dog").ok).toBe(true);
+  });
+
+  it("gives every boot its own steer ids so a restarted server never reuses one", () => {
+    // The broadcaster page survives a server restart and drops any steer whose id it has already
+    // acted on, so two boots handing out the same id wedge the queue for good.
+    const ids = (startClock: number) => {
+      let clock = startClock;
+      const channel = new Channel(() => clock);
+      const seen: number[] = [];
+      for (const uid of ["ana", "bob", "carol"]) {
+        const added = channel.addIdea({ uid, name: uid, text: "a cat", source: "web" });
+        if (!added.ok) throw new Error("setup failed");
+        clock += STEER_GAP_MS;
+        const steer = channel.beginSteer(added.idea.id, "p");
+        seen.push(added.idea.id, steer.steerId);
+        channel.resolveSteer(steer.steerId, true);
+      }
+      return seen;
+    };
+    const first = ids(1_000_000);
+    const second = ids(1_000_500); // a restart half a second later
+    expect(first.filter((id) => second.includes(id))).toEqual([]);
   });
 
   it("ignores a result for a steer id that is not in flight", () => {

@@ -37,39 +37,43 @@ viewer subscribes to.
 
 1. A viewer sends an idea (web `POST /say`, or the Telegram `submit_idea` tool). It's moderated on
    Nebius before anything else happens (~0.6–1.4 s); rejected ideas stop here with a reason.
-2. Once the scene on air has held the screen for at least 25 s and no steer is in flight, the
+2. Once the scene on air has held the screen for at least 10 s and no steer is in flight, the
    broadcaster's next poll of `/b/:secret/next-steer` (every 3 s) makes the server pick the
    highest-karma, then oldest, queued idea.
-3. The server writes a steering prompt from it on Nebius (~6–7 s) and, in parallel, the narrator
-   line for the same idea (capped at 4 s), which SLNG synthesises (~1.9 s).
+3. The server writes a steering prompt from it on Nebius (~6–7 s) and, in parallel, checks whether
+   the idea reads as a request for an ad (`isAdIdea` in `showrunner.ts`); if it does, it writes and
+   synthesises an ad read (the write is time-boxed at 8 s) — every other idea gets no clip at all.
 4. The broadcaster sends `{type: "prompt", prompt, prompt_version}` to the open Director session (or
-   `configure`s a new one) and queues the narrator clip into the mixed audio graph right away.
+   `configure`s a new one) and, when the steer carries a clip, queues it into the mixed audio graph
+   right away.
 5. Director confirms `prompt_applied` ~7–8 s after the send. The broadcaster reports that to
    `POST /b/:secret/steer-result`; the server makes the idea the scene on air and DMs the Telegram
    submitter "You're on air now!"
 6. The new frames actually reach the canvas, get republished into Vonage, and land on every viewer's
-   screen ~17–20 s after the original send. The spoken narrator line is what fills that gap — it
-   reads as TV continuity, not lag.
+   screen ~17–20 s after the original send. A steer whose idea asked for an ad has its ad read fill
+   part of that gap; every other steer plays in silence.
 
 ### The voice
 
-The channel has one voice, and it narrates rather than reads. When a steer goes out, a `narrator`
-agent on Nebius writes one or two present-tense sentences about the scene that is coming up — a
-deadpan continuity announcer crossed with a nature documentary — prefixed with a credit for
-whoever prompted it: "From Timba. The capybara stirs the pot with slow, deliberate motions." It runs
-in parallel with the steer-writing call, is capped at 4 seconds, and falls back to the plain
-"Up next, from Timba: …" read on timeout, failure or an empty answer, so the voice is never the
-thing that delays a steer. The written line is capped at 22 words in code, since the clip has to
-finish before the next steer arrives.
+The channel's voice only speaks for an ad. When a viewer's idea reads as a request to create or
+broadcast an ad — `isAdIdea()` in `showrunner.ts`, a keyword check covering English, Catalan and
+Spanish — the same ad-writing agent behind the karma-gated pitch (below) writes a high-energy
+infomercial read for it: a hook, the invented product named and revealed, one absurdly specific
+benefit, and a tagline, opening "A word from Timba." SLNG's `slng/fish/tts:s2.1-pro` gets a leading
+`[excited]` tone marker in the text, a silent control tag it does not read aloud (verified live by
+transcribing a marked clip back). The write runs in parallel with the steer-writing call,
+time-boxed at 8 seconds, and the steer simply airs silent — no clip at all — on a non-ad idea, a
+timeout, a write failure, an empty read, or a TTS failure. The written line is capped at 25 words in
+code, since the clip has to finish before the next steer arrives.
 
 The same voice is also the karma reward. At 3 karma a viewer unlocks the pitch: they send a brief
-of up to 140 characters ("sell my lemonade stand, aggressively") and the channel reads a
-tongue-in-cheek advert for it over whatever is on air, opening "A word from Timba." The brief and
-the nickname go through their own moderation rubric first — no real brands, people, prices, claims
-or URLs — and the written read is capped at 35 words with anything URL-like stripped out. One
-pitch is on air or pending at a time, one per viewer every three minutes, and a pitch nobody
-collects within 60 seconds is dropped and the viewer told. The broadcaster plays spoken clips
-strictly one after another, so a pitch never talks over a steer's narration.
+of up to 140 characters ("sell my lemonade stand, aggressively") and the channel reads the same
+kind of ad for it over whatever is on air, opening "A word from Timba." The brief and the nickname
+go through their own moderation rubric first — no real brands, people, prices, claims or URLs — and
+the written read is capped at the same 25 words with anything URL-like stripped out. One pitch is
+on air or pending at a time, one per viewer every three minutes, and a pitch nobody collects within
+60 seconds is dropped and the viewer told. The broadcaster plays spoken clips strictly one after
+another, so a pitch never talks over a steer's ad read.
 
 ### Why Director, not a text-to-video call
 
@@ -100,7 +104,7 @@ proxy's defaults, or every session fails with HTTP 400 before reaching fal.
 ### How long a scene lasts
 
 There's no fixed clip length. A scene stays on air until the next idea's steer is applied. Steers are
-spaced at least `STEER_GAP_MS` = 25 s apart (`channel.ts`), chosen from the measured 17–20 s
+spaced at least `STEER_GAP_MS` = 10 s apart (`channel.ts`), chosen from the measured 17–20 s
 steer-to-screen latency, so with a busy queue each scene gets roughly 25–35 s; with an empty queue the
 current scene just continues — there's nothing to steer toward. After 120 s with nothing queued, the
 broadcaster stops the Director session (`{type: "stop"}`) to stop billing and shows the channel ident
@@ -121,15 +125,16 @@ for the moderator.
 
 ### The ticker
 
-A TV-style crawl scrolls along the bottom of the broadcast picture itself, so it appears for every
-viewer and in recordings with no change to the viewer page. Message
+A TV-style crawl scrolls along the bottom of the viewer page (`public/index.html`), fixed to the
+viewport edge, outside the video — it never touches the broadcast picture itself, so it's absent
+from the published stream and from recordings. Message
 [@timesquarescreenbot](https://t.me/timesquarescreenbot) a photo, optionally with a caption, and —
-once it clears moderation — it scrolls in the ticker for 30 minutes. The bot picks the smallest
+once it clears moderation — it scrolls in the ticker for 1 minute. The bot picks the smallest
 Telegram-provided size whose shorter side is at least 240px (never the original), refuses anything
 over 1 MB or not JPEG/PNG/WEBP by magic bytes, and moderates the image on a Nebius vision model
 before it is ever stored; a rejection or a moderation error/timeout both refuse the photo. One
-image per user at a time — a new one replaces the old — and the ticker holds at most 12 items.
-Text messages to the bot are unaffected.
+image per user at a time, at most one per minute — a newer accepted photo still replaces the
+older — and the ticker holds at most 12 items. Text messages to the bot are unaffected.
 
 ### TV mode and recommendations
 
@@ -154,12 +159,10 @@ as an idea through the same moderated path as `/say`.
 | Sponsor | What it does here |
 |---|---|
 | **fal — H3 Max Director** | The channel's video: one continuous WebRTC session (`minimax/h3-max/director`), steered live with `prompt` / `prompt_version` messages sent from the broadcaster page — never a pre-rendered clip. |
-| **Nebius Token Factory** | Five jobs through Mastra's `nebius/<model>` router, all on `Qwen/Qwen3-30B-A3B-Instruct-2507`: moderating every idea and nickname, writing the steering prompt that transitions from the current scene, writing the narrator line spoken over it, and — for the karma-gated pitch — a second moderation rubric and the ad read. |
-| **Mastra** | The backend framework: six agents (`moderator`, `sceneWriter`, `narrator`, `pitchModerator`, `pitchWriter`, `showrunner`), a Telegram channel via `@chat-adapter/telegram` in polling mode, per-user `Memory` (last 10 messages) on LibSQL storage, and the `registerApiRoute()` custom routes that serve the whole HTTP contract plus both static pages. |
-| **Nebius Token Factory** | Two jobs through Mastra's `nebius/<model>` router, both on `Qwen/Qwen3-30B-A3B-Instruct-2507`: moderating every idea and nickname, and writing the steering prompt that transitions from the current scene. A third job, `nebius/openbmb/MiniCPM-V-4_5`, moderates every ticker photo before it is stored. |
-| **Mastra** | The backend framework: three agents (`moderator`, `sceneWriter`, `showrunner`), a Telegram channel via `@chat-adapter/telegram` in polling mode, per-user `Memory` (last 10 messages) on LibSQL storage, and the `registerApiRoute()` custom routes that serve the whole HTTP contract plus both static pages. |
+| **Nebius Token Factory** | Five jobs through Mastra's `nebius/<model>` router, all on `Qwen/Qwen3-30B-A3B-Instruct-2507`: moderating every idea and nickname, writing the steering prompt that transitions from the current scene, writing an amend's one-thing change, moderating a pitch brief against its own rubric, and writing the ad read shared by the pitch and by any steer whose idea asks for an ad. A sixth job, `nebius/openbmb/MiniCPM-V-4_5`, moderates every ticker photo before it is stored. |
+| **Mastra** | The backend framework: six agents (`moderator`, `sceneWriter`, `amendWriter`, `pitchModerator`, `pitchWriter`, `showrunner`), a Telegram channel via `@chat-adapter/telegram` in polling mode, per-user `Memory` (last 10 messages) on LibSQL storage, and the `registerApiRoute()` custom routes that serve the whole HTTP contract plus both static pages. A voice note to the bot is transcribed before it reaches the showrunner, so every tool works by voice too. |
 | **Vonage Video API** | Fan-out: one routed session. The broadcaster publishes a canvas-plus-WebAudio `MediaStreamTrack` with `OT.initPublisher`; every viewer connects with a subscribe-only token from `GET /viewer-token`. |
-| **SLNG** | TTS only: `slng/fish/tts:s2.1-pro` on `eu-west.api.slng.ai` synthesises the channel's voice — the narrator line written for each steer, and the sponsored ad read a viewer unlocks at 3 karma — mixed into the published audio one clip at a time, ducking Director's own audio while it plays. |
+| **SLNG** | `slng/fish/tts:s2.1-pro` on `eu-west.api.slng.ai` synthesises the channel's voice — the ad read for a steer whose idea asks for an ad, and the sponsored ad read a viewer unlocks at 3 karma — mixed into the published audio one clip at a time, ducking Director's own audio while it plays. Voice notes to the bot are transcribed with SLNG, and so is every `tv.html` concierge turn, which SLNG then speaks back. |
 | **Titan OS** | `tv.html`: a 10-foot UI for the channel — remote/keyboard navigation, a "you might also like" rail driven by the scene on air (`recs.ts`), and a `concierge` agent (`concierge.ts`) you can talk to for movie/show picks and what's on live TV, by voice or by typing. Catalog data (TVmaze, Wikipedia) is keyless — see `catalog.ts`. |
 | **Galtea** | Adversarial evaluation of the moderator: a SECURITY dataset red-teamed the real-person rule, and the run found it missed a real person when the idea was written in Spanish. Fixed and re-run before/after — see `docs/eval/GALTEA.md`. |
 
@@ -234,7 +237,7 @@ src/mastra/
 ├── index.ts               Routes, Mastra instance, broadcaster-secret gate, fal-proxy wiring
 ├── channel.ts             In-memory state machine: idea queue, steer lifecycle, likes, karma
 ├── pitch.ts               The karma-gated sponsored voice-over: slot, cooldown, deadline
-├── showrunner.ts          The Nebius agents: moderation, steering, narration, the pitch, recs
+├── showrunner.ts          The Nebius agents: moderation, steering, amends, the pitch and ad, recs
 ├── announcer.ts           SLNG TTS: synthesises and serves the spoken clips
 ├── telegram.ts            Telegram channel: showrunner agent, its tools, proactive DMs
 ├── vonage.ts              Vonage session creation and token minting

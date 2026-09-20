@@ -113,6 +113,7 @@ describe("telegramPhotoIntake", () => {
 describe("handlePhotoSubmission", () => {
   function deps(overrides: Partial<PhotoIntakeDeps> = {}): PhotoIntakeDeps {
     return {
+      cooldownSeconds: vi.fn(() => 0),
       downloadPhoto: vi.fn(async () => JPEG_BYTES),
       moderateImage: vi.fn(async () => ({
         verdict: { ok: true, reason: "" },
@@ -147,6 +148,15 @@ describe("handlePhotoSubmission", () => {
       mime: "image/jpeg",
       bytes: JPEG_BYTES,
     });
+  });
+
+  it("refuses on cooldown before touching the network, and reports seconds left", async () => {
+    const d = deps({ cooldownSeconds: vi.fn(() => 42) });
+    const result = await handlePhotoSubmission(d, input());
+    expect(result).toEqual({ accepted: false, reply: "One photo per minute on the ticker: 42s left." });
+    expect(d.downloadPhoto).not.toHaveBeenCalled();
+    expect(d.moderateImage).not.toHaveBeenCalled();
+    expect(d.addItem).not.toHaveBeenCalled();
   });
 
   it("refuses when every offered size is too small", async () => {
