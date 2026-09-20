@@ -783,6 +783,10 @@
   }
   #ad-banner[hidden] { display: none; }
   #ad-banner.ad-banner-show { opacity: 1; transform: translateY(0); }
+  /* #ad-banner sets its own ID-level `display`, which (being an ID) would otherwise outrank the
+     blanket `.chrome` hide in the pure-TV block below regardless of media query — the same trap
+     that block's own comment documents. Restate it here, inside this self-contained region. */
+  body.chrome-hidden #ad-banner { display: none; }
   #ad-banner-badge {
     flex: none;
     font-family: var(--display-font);
