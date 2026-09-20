@@ -44,14 +44,14 @@ viewer subscribes to.
    the idea reads as a request for an ad (`isAdIdea` in `showrunner.ts`); if it does, it writes and
    synthesises an ad read (the write is time-boxed at 8 s) — every other idea gets no clip at all.
 4. The broadcaster sends `{type: "prompt", prompt, prompt_version}` to the open Director session (or
-   `configure`s a new one) and, when the steer carries a clip, queues it into the mixed audio graph
-   right away.
+   `configure`s a new one) and, when the steer carries a clip, holds it for `AD_CLIP_DELAY_MS`
+   (17 s) so it lands on its own scene instead of the one still on screen.
 5. Director confirms `prompt_applied` ~7–8 s after the send. The broadcaster reports that to
    `POST /b/:secret/steer-result`; the server makes the idea the scene on air and DMs the Telegram
    submitter "You're on air now!"
 6. The new frames actually reach the canvas, get republished into Vonage, and land on every viewer's
-   screen ~17–20 s after the original send. A steer whose idea asked for an ad has its ad read fill
-   part of that gap; every other steer plays in silence.
+   screen ~17–20 s after the original send. A steer whose idea asked for an ad has its ad read start
+   once that new scene lands; every other steer plays in silence.
 
 ### The voice
 
