@@ -757,6 +757,80 @@
   }
   #say-btn:disabled, #say-input:disabled { opacity: .6; cursor: not-allowed; }
 
+  /* adbanner:start — on-screen AD slate, up while the channel's voice reads an ad (10 s hard
+     stop, server-side). Self-contained, safe to drop in a conflict. Stacks directly above the
+     photo banner via the shared --ticker-h/--ticker-bottom layout contract: --ticker-h (declared
+     on :root, ticker:start above) is the photo banner's own height, and --ticker-bottom (a
+     sibling agent's contract, possibly absent in this worktree) is how far its bottom edge sits
+     above the viewport bottom. The fallbacks below make this banner sit correctly on its own
+     either way: 0 on desktop, the pinned input bar's height on phones. */
+  #ad-banner {
+    position: fixed;
+    left: 0;
+    right: var(--side-col-w);
+    bottom: calc(var(--ticker-bottom, 0px) + var(--ticker-h, 0px));
+    z-index: 18;
+    display: flex;
+    align-items: center;
+    gap: .7rem;
+    background: #000;
+    border-top: 4px solid #ff2ec4;
+    padding: .55rem 1rem;
+    opacity: 0;
+    transform: translateY(8px);
+    pointer-events: none;
+    transition: opacity .2s ease-out, transform .2s ease-out;
+  }
+  #ad-banner[hidden] { display: none; }
+  #ad-banner.ad-banner-show { opacity: 1; transform: translateY(0); }
+  #ad-banner-badge {
+    flex: none;
+    font-family: var(--display-font);
+    font-size: .95rem;
+    letter-spacing: .04em;
+    color: #000;
+    background: #fff200;
+    padding: .25rem .55rem;
+    border-radius: 4px;
+  }
+  #ad-banner-line {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    color: #fff200;
+    font-weight: 700;
+    font-size: .85rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  #ad-banner-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    background: #ff2ec4;
+    transform: scaleX(1);
+    transform-origin: left;
+  }
+  #ad-banner-bar.ad-banner-draining { transition: transform 10s linear; transform: scaleX(0); }
+  @media (prefers-reduced-motion: reduce) {
+    #ad-banner { transition: none; }
+    #ad-banner-bar.ad-banner-draining { transition: none; transform: scaleX(1); }
+  }
+  @media (max-width: 820px), (max-height: 500px) and (orientation: landscape) {
+    #ad-banner {
+      right: 0;
+      bottom: calc(
+        var(--ticker-bottom, calc(var(--inputbar-h) + env(safe-area-inset-bottom, 0px))) +
+        var(--ticker-h, 0px)
+      );
+    }
+  }
+  /* adbanner:end */
+
   #splash, #name-modal {
     position: fixed;
     inset: 0;
@@ -1658,6 +1732,15 @@
       <button type="button" class="sheet-row sheet-close" id="more-close">Close</button>
     </div>
   </div>
+
+  <!-- adbanner:start — on-screen AD slate, shown while the channel's voice reads an ad. class="chrome"
+       hides it with the rest of the chrome in pure-TV mode and in landscape-phone mode. -->
+  <div id="ad-banner" class="chrome" hidden aria-hidden="true">
+    <span id="ad-banner-badge">AD</span>
+    <p id="ad-banner-line"></p>
+    <div id="ad-banner-bar"></div>
+  </div>
+  <!-- adbanner:end -->
 
   <div id="splash">
     <div class="splash-card">
@@ -2818,6 +2901,39 @@
       if (name) setText(youKarma, String(myKarma));
     }
 
+    // adbanner:start — on-screen AD slate, up while the channel's voice reads an ad. Self-contained;
+    // renderStatus calls renderAdBanner once, right after the pitch line's own render call.
+    const AD_BANNER_MS = 10_000;
+    const adBanner = document.getElementById("ad-banner");
+    const adBannerLine = document.getElementById("ad-banner-line");
+    const adBannerBar = document.getElementById("ad-banner-bar");
+    let adBannerEndsAt = null;
+    let adBannerHideTimer = null;
+
+    function hideAdBanner() {
+      if (adBannerHideTimer) clearTimeout(adBannerHideTimer);
+      adBannerHideTimer = null;
+      adBannerEndsAt = null;
+      adBanner.classList.remove("ad-banner-show");
+      adBanner.hidden = true;
+    }
+
+    function renderAdBanner(ad) {
+      if (!ad) return hideAdBanner();
+      if (ad.endsAt === adBannerEndsAt) return; // same ad still airing, nothing to do
+      adBannerEndsAt = ad.endsAt;
+      adBannerLine.textContent = ad.line;
+      adBanner.hidden = false;
+      adBannerBar.classList.remove("ad-banner-draining");
+      void adBannerBar.offsetWidth; // restart the drain transition for a new ad
+      adBannerBar.classList.add("ad-banner-draining");
+      requestAnimationFrame(() => adBanner.classList.add("ad-banner-show"));
+      // Belt and braces against a stalled poll: hides itself even if /status stops updating.
+      if (adBannerHideTimer) clearTimeout(adBannerHideTimer);
+      adBannerHideTimer = setTimeout(hideAdBanner, AD_BANNER_MS);
+    }
+    // adbanner:end
+
     // ---------- chat scroll pinning ----------
     // Desktop only: a viewer scrolled up gets a "new messages" pill instead of new chat arriving
     // silently out of view (mobile's sheet CSS never unhides #chat-jump-btn — see updateChatJumpBtn).
@@ -2962,6 +3078,7 @@
       renderAmendToggle(status.now); // amend
       renderLikeButton();
       renderPitchBadge(status.pitch); // pitch
+      renderAdBanner(status.ad); // adbanner
       setText(viewerCount, `${status.viewers} watching`);
       renderSteering(status.steering);
       syncList(railQueue, status.queue, (q) => q.id, renderQueueItem);
