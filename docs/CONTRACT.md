@@ -24,8 +24,10 @@ Custom routes cannot live under `/api` (Mastra reserves it).
 
 `uid`: 8–64 chars of `[A-Za-z0-9_-]`, random, generated client-side, kept in `localStorage`.
 `name`: 1–24 chars, moderated together with the idea. `text`: 1–280 chars.
-`brief`: 1–140 chars, moderated with the name against a separate pitch rubric (no real brands,
-people, prices, claims or URLs).
+`brief`: 1–140 chars, moderated with the name against a separate pitch rubric. A real company,
+brand, product, price, discount or offer is allowed (a sponsor, the viewer's own startup); real
+people, health/financial/legal/safety claims, age-restricted or illegal goods, scams, and contact
+details are refused.
 
 `kind` (default `"new"`): `"new"` replaces the scene on air, same as before. `"amend"` is "Yes, and" —
 it changes ONE thing about the scene already on air while everything else keeps running, instead of
@@ -94,10 +96,10 @@ above): `"amend"` means the item changes one thing about the scene on air rather
 field is `null` the rest of the time, including while the ad read is still being written.
 
 `ad` is set by `POST /b/:secret/clip-started` (below) the moment the broadcaster actually starts
-playing a clip, and clears itself `AD_BANNER_MS` (10 s) later (`src/mastra/ad-banner.ts`) — the same
-10 s the broadcaster hard-stops the clip at, so the banner and the voice go quiet together. `null`
-the rest of the time, including the whole `AD_CLIP_DELAY_MS` (17 s) gap between a steer landing and
-its ad read actually starting.
+playing a clip, and clears itself once that clip's own real duration has passed, plus half a
+second of grace (`src/mastra/ad-banner.ts`) — there is no fixed length or hard stop, so the banner
+and the voice always go quiet together. `null` the rest of the time, including the whole
+`AD_CLIP_DELAY_MS` (17 s) gap between a steer landing and its ad read actually starting.
 
 ## Broadcaster page (secret in the path; wrong secret → 404)
 
@@ -108,7 +110,7 @@ its ad read actually starting.
 | | `pitch` is `{ pitchId, name, url }`, a sponsored voice-over waiting for the air. It rides along with whatever the poll was going to answer — including a poll that would otherwise be `204`, which becomes a `200` carrying only `pitch`. Handed out exactly once, so act on it in the same poll; unlike the steer it is NOT repeated. Queue it behind any clip still playing and report the outcome. |
 | `POST /b/:secret/steer-result` | body `{ steerId, applied, reason? }` → `{ ok, onAir }`. Send `applied:true` on Director's `prompt_applied`, `false` on `prompt_rejected`. |
 | `POST /b/:secret/pitch-result` | body `{ pitchId, played, reason? }` → `{ ok }`. Frees the pitch slot either way. A pitch nobody reports on is dropped 60 s after it was handed out. |
-| `POST /b/:secret/clip-started` | body `{ clipId }` → `{ ok }`. Sent the moment a clip actually starts playing (fire-and-forget from the broadcaster's side). Sets `status.ad` to that clip's line for `AD_BANNER_MS`. `404` on an unknown or already-forgotten `clipId`, `400` on a malformed one. |
+| `POST /b/:secret/clip-started` | body `{ clipId, seconds }` → `{ ok }`. Sent the moment a clip actually starts playing (fire-and-forget from the broadcaster's side). `seconds` is the clip's real length; sets `status.ad` to that clip's line until `seconds` have passed (plus 500ms grace). A missing or out-of-range `seconds` (not `> 0` and `<= 60`) falls back to 10 rather than failing the request, so an old broadcaster tab cannot break the route. `404` on an unknown or already-forgotten `clipId`, `400` on a malformed body. |
 | `ALL /b/:secret/fal-proxy` | fal client `proxyUrl`. Holds `FAL_KEY` server-side. |
 | `POST /b/:secret/eval` | body `{ name, text }` → `200 { ok: true, reason: "", prompt }` when accepted, `200 { ok: false, reason }` when moderation refuses, `503 { ok: false, reason }` when the moderator or scene writer fails · `400` invalid. Runs `moderate(text, name)` and, when accepted, `writeSteer(undefined, text)` exactly as `/say` would, with no side effects: nothing is queued, nothing airs, no TTS runs. The evaluation hook for external red-teaming (Galtea); see `src/mastra/eval.ts`. |
 
