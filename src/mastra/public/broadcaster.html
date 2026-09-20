@@ -309,9 +309,14 @@
     gain.linearRampToValueAtTime(target, now + 0.2);
   }
 
+  // The voice only ever reads ads: a long read is cut here, in step with the on-screen AD banner
+  // (ad-banner.ts / index.html), which is up for exactly this long from the clip-started report below.
+  const AD_MAX_MS = 10_000;
+
   /**
    * Fetch, decode and play one clip, resolving when it has finished. Never fatal: returns the
    * failure message instead of throwing, so the queue keeps moving and a pitch can be reported.
+   * Hard-stopped at AD_MAX_MS regardless of the clip's real length.
    */
   async function playClip(item) {
     try {
@@ -322,15 +327,30 @@
       const source = state.audio.ctx.createBufferSource();
       source.buffer = buffer;
       source.connect(state.audio.destination);
+      const playMs = Math.min(buffer.duration * 1000, AD_MAX_MS);
+      let sourceEnded = false;
+      let stopTimer;
       // A suspended AudioContext (no user gesture yet) never fires onended, which would wedge the
-      // queue for the rest of the broadcast. Give up a couple of seconds past the clip's length.
+      // queue for the rest of the broadcast. Give up a couple of seconds past the (capped) length.
       const ended = new Promise((resolve) => {
-        source.onended = resolve;
-        setTimeout(resolve, buffer.duration * 1000 + 2000);
+        source.onended = () => {
+          sourceEnded = true;
+          clearTimeout(stopTimer);
+          resolve();
+        };
+        setTimeout(resolve, playMs + 2000);
       });
       duckDirectorGain(0.3);
       log("clip_playing", { key: item.key, seconds: Math.round(buffer.duration * 10) / 10 });
+      reportClipStarted(item.url);
       source.start();
+      if (buffer.duration * 1000 > AD_MAX_MS) {
+        stopTimer = setTimeout(() => {
+          if (sourceEnded) return; // already finished on its own; nothing to cut
+          log("clip_cut", { key: item.key, ms: AD_MAX_MS });
+          source.stop();
+        }, AD_MAX_MS);
+      }
       await ended;
       duckDirectorGain(1.0);
       log("clip_ended", { key: item.key });
@@ -398,6 +418,19 @@
     clearTimeout(timer);
     state.adClipTimers.delete(steerId);
     log("clip_delay_cancelled", { key: `announcer-${steerId}`, reason });
+  }
+
+  /**
+   * Tell the server which clip just started, so it can show the on-screen AD banner. Fire-and-
+   * forget: a failed report must never block or fail playback, so this is never awaited.
+   */
+  function reportClipStarted(url) {
+    const clipId = url.split("/").pop();
+    fetch(`b/${state.secret}/clip-started`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clipId }),
+    }).catch((e) => log("clip_started_failed", { clipId, message: String(e) }));
   }
 
   /** Tell the server the pitch had its turn, so the next viewer can claim the slot. */
