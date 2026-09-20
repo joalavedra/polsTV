@@ -4,7 +4,7 @@ Norma scanned `feat/skeleton` on Sunday morning and reported 133 findings under 
 21 under Manageability. We took the first batch of ten from each, fixed them, pushed, and
 rescanned. Below is what we changed, what we left alone, and our reasons.
 
-Score before: __ / after: __
+Score before: 74 / after: 86
 
 Every fix has the comment Norma asks for next to it:
 `// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code`.
