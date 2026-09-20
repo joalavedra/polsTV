@@ -208,7 +208,7 @@ the event; fal's list price is $0.08/s. Keep `?director=off` on until you mean t
 | `VONAGE_PRIVATE_KEY64` | yes | That application's private key, base64-encoded. |
 | `SLNG_API_KEY` | yes | SLNG key for the channel's TTS voice. |
 | `TELEGRAM_BOT_TOKEN` | yes | Bot token from BotFather. |
-| `PUBLIC_URL` | no | Link the bot sends in DMs. Defaults to `http://localhost:4111`. |
+| `PUBLIC_URL` | yes | Link the bot sends in DMs. No default; use `http://localhost:4111` locally. |
 | `PORT` | no | HTTP port. Defaults to `4111`. |
 
 ## Project layout

@@ -29,7 +29,7 @@ import {
 } from "./showrunner";
 import { spend } from "./spend";
 import { decideSteerVoice, SILENT_VOICE, type SteerVoiceDeps } from "./steer-voice";
-import { notifyPitchDropped, notifySceneChange, showrunner } from "./telegram";
+import { notifyPitchDropped, notifySceneChange, showrunner, watchLink } from "./telegram";
 import { ticker } from "./ticker";
 import { transcribe } from "./transcriber";
 import { videoAccess } from "./vonage";
@@ -165,10 +165,11 @@ const falProxy = createRouteHandler({
 // edits show up without a restart.
 const pageDirs = [process.cwd(), import.meta.dirname];
 
-// Link previews need absolute URLs, and only the server knows where it is published.
-const publicUrl = (process.env["PUBLIC_URL"] ?? "http://localhost:4111").replace(/\/+$/, "");
-
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
 async function page(file: "index.html" | "broadcaster.html"): Promise<string> {
+  // Link previews need an absolute URL, and only the server knows where it is published. Read
+  // lazily (per request, via watchLink()) rather than at import time — see telegram.ts.
+  const publicUrl = watchLink().replace(/\/+$/, "");
   for (const dir of pageDirs) {
     const html = await readFile(join(dir, file), "utf8").catch(() => undefined);
     if (html !== undefined) return html.replaceAll("__PUBLIC_URL__", publicUrl);

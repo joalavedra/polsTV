@@ -33,11 +33,17 @@ import { extractTelegramVoice, handleVoiceMessage } from "./voice-intake";
 import { log } from "./log";
 
 const TELEGRAM_PREFIX = "telegram:";
-const DEFAULT_PUBLIC_URL = "http://localhost:4111";
 const CHANNEL_NAME = "polsTV";
 
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+/** The public address the bot links to in DMs. No loopback fallback: unset breaks every DM link
+ * silently, so this fails fast instead. Read lazily (only when called), never at import time. */
 export function watchLink(): string {
-  return process.env["PUBLIC_URL"] || DEFAULT_PUBLIC_URL;
+  const value = process.env["PUBLIC_URL"];
+  if (!value) {
+    throw new Error("PUBLIC_URL is missing. Add it to .env (see .env.example).");
+  }
+  return value;
 }
 
 /** Fails fast: a Telegram tool must never trust a uid the model could have supplied itself. */
