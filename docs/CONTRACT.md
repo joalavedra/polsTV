@@ -21,6 +21,8 @@ Custom routes cannot live under `/api` (Mastra reserves it).
 | `GET /spend` | — | `SpendSnapshot` (below), the spend pill's data. Not under `/status`: that route is polled every second by every viewer, spend only needs a few-second cadence. |
 | `GET /ticker` | — | `{ items: [{ id, name, caption, url }] }`, the images currently on the ticker (newest last). `url` is page-relative (`ticker/<id>`, no leading slash — the app is served under `/polstv/` in production). |
 | `GET /ticker/:id` | — | The image bytes, with the right `content-type` and `cache-control: public, max-age=600`. `404` once the item is unknown or has expired. |
+| `GET /profile/:pid` | `pid` must match `/^[0-9a-f]{12}$/` | `200 { pid, name, karma, items: [{ ideaId, text, airedAt, shot }] }` — `shot` is page-relative (`shot/<ideaId>`). `items` is that viewer's aired scenes, newest first (see HISTORY below). An unknown pid is `200` with `items: []`, not `404` — a viewer with no aired scenes is normal. `400` on a malformed pid. |
+| `GET /shot/:ideaId` | — | The still's JPEG bytes, `content-type: image/jpeg`, `cache-control: public, max-age=60` (short, not `immutable`: an amend can replace the still under the same ideaId). `404` when unknown. |
 
 `uid`: 8–64 chars of `[A-Za-z0-9_-]`, random, generated client-side, kept in `localStorage`.
 `name`: 1–24 chars, moderated together with the idea. `text`: 1–280 chars.
@@ -77,16 +79,33 @@ interface Status {
   live: boolean;            // broadcaster polled within the last 15 s
   viewers: number;
   // scene on air; karma = its prompter's, live; amends = viewer amendments applied so far
-  now: { ideaId; uid; name; text; prompt; airedAt; likes; karma; amends: { name; text }[] } | null;
+  now: { ideaId; uid; name; text; prompt; airedAt; likes; karma; pid; amends: { name; text }[] } | null;
   steering: { name; text; kind: "new" | "amend" } | null;            // sent to Director, not on screen yet (~20 s)
-  queue: { id; name; text; karma; kind: "new" | "amend" }[];
-  chat: { id; name; text; at; karma }[];                             // last 50
-  rank: { name; karma }[];                                           // top 10
+  queue: { id; name; text; karma; kind: "new" | "amend"; pid }[];
+  chat: { id; name; text; at; karma; pid }[];                        // last 50
+  rank: { name; karma; pid }[];                                      // top 10
   pitch: { name; brief; state } | null;  // sponsored voice-over waiting, playing, or just dropped
   ad: { line; endsAt } | null;           // on-screen AD banner: the line airing now, and when it ends
   ts: number;
 }
 ```
+
+`pid` is a public, one-way stand-in for a viewer's uid (`src/mastra/pid.ts`: the first 12 hex chars
+of `sha256(uid + ":" + BROADCASTER_SECRET)`) — stable for a given uid, so a name can be clicked
+through to `GET /profile/:pid` (HISTORY, below) without ever exposing the uid itself. `uid` is
+private: it authorises likes and pitches and must never reach another viewer. `now.uid` is the one
+exception, pre-dating `pid` (the client compares it to its own uid to render "your scene"); `chat`,
+`queue` and `rank` never carried `uid` and still don't.
+
+## HISTORY: per-viewer scene stills
+
+Because the channel is one continuous stream, "a viewer's scenes" means one still (JPEG) captured
+per aired scene, not a video clip. The broadcaster grabs it from the canvas ~21 s after a steer
+applies and posts it to `POST /b/:secret/scene-shot` (below); the server stores it under the
+scene's `ideaId`, keyed to whoever prompted it via `pid`. `GET /profile/:pid` lists a viewer's
+scenes newest first; `GET /shot/:ideaId` serves one still. Capped at 300 entries overall and 24
+returned per viewer (`HISTORY_MAX_ENTRIES`/`HISTORY_PER_VIEWER`, `src/mastra/history.ts`);
+persisted to `data/history/` so it survives a restart (README has the layout and the caps).
 
 `kind` on `steering`/`queue` items, and `now.amends`, are the "Yes, and" fields (see `POST /say`
 above): `"amend"` means the item changes one thing about the scene on air rather than replacing it.
@@ -111,6 +130,7 @@ and the voice always go quiet together. `null` the rest of the time, including t
 | `POST /b/:secret/steer-result` | body `{ steerId, applied, reason? }` → `{ ok, onAir }`. Send `applied:true` on Director's `prompt_applied`, `false` on `prompt_rejected`. |
 | `POST /b/:secret/pitch-result` | body `{ pitchId, played, reason? }` → `{ ok }`. Frees the pitch slot either way. A pitch nobody reports on is dropped 60 s after it was handed out. |
 | `POST /b/:secret/clip-started` | body `{ clipId, seconds }` → `{ ok }`. Sent the moment a clip actually starts playing (fire-and-forget from the broadcaster's side). `seconds` is the clip's real length; sets `status.ad` to that clip's line until `seconds` have passed (plus 500ms grace). A missing or out-of-range `seconds` (not `> 0` and `<= 60`) falls back to 10 rather than failing the request, so an old broadcaster tab cannot break the route. `404` on an unknown or already-forgotten `clipId`, `400` on a malformed body. |
+| `POST /b/:secret/scene-shot?ideaId=<id>` | body: raw JPEG, `content-type: image/jpeg`, 1 KB-250 KB. `200 { ok: true }`. `400` on the wrong content-type, a body outside the size range, or bytes that don't start with the JPEG magic (`FF D8 FF`). `409` unless `ideaId` is the scene currently on air (`channel.status().now?.ideaId`) — the name, text, uid→pid and airedAt are all read from the channel, never from the request. Fire-and-forget from the broadcaster's side (HISTORY, above); never allowed to affect steering or playback. |
 | `ALL /b/:secret/fal-proxy` | fal client `proxyUrl`. Holds `FAL_KEY` server-side. |
 | `POST /b/:secret/eval` | body `{ name, text }` → `200 { ok: true, reason: "", prompt }` when accepted, `200 { ok: false, reason }` when moderation refuses, `503 { ok: false, reason }` when the moderator or scene writer fails · `400` invalid. Runs `moderate(text, name)` and, when accepted, `writeSteer(undefined, text)` exactly as `/say` would, with no side effects: nothing is queued, nothing airs, no TTS runs. The evaluation hook for external red-teaming (Galtea); see `src/mastra/eval.ts`. |
 
