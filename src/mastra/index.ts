@@ -16,7 +16,6 @@ import type { SteerWriteOutcome } from "./showrunner";
 import { handleSay, type SayDeps, type SayInput } from "./say";
 import {
   amendWriter,
-  isAdIdea,
   MAX_IDEA_CHARS,
   MAX_PITCH_BRIEF_CHARS,
   moderate,
@@ -62,7 +61,7 @@ function accrueHeartbeat(directorOpen: boolean): void {
 }
 
 // The real wiring for steer-voice.ts's decideSteerVoice(): Nebius's ad writer, SLNG's synthesise.
-const steerVoiceDeps: SteerVoiceDeps = { isAdIdea, writeAdRead, synthesise };
+const steerVoiceDeps: SteerVoiceDeps = { writeAdRead, synthesise };
 
 // Web callers may not claim a "telegram:" uid; those only come from the Telegram channel.
 const uid = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);

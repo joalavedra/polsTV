@@ -211,56 +211,27 @@ export function normalizeForModeration(text: string): string {
   return text.normalize("NFKC");
 }
 
-// English, Catalan and Spanish (Barcelona event) words for "ad"/"advertise"/"sponsor" and their
-// common inflections. Matched as whole words only (see AD_IDEA_PATTERN) so "add", "bad",
-// "adventure", "shadow", "radio", "madrid" and "adiós" never trip it.
+// English, Catalan and Spanish (Barcelona event) words for "ad"/"advertise"/"sponsor", each written
+// as a stem with its inflections as optional suffixes. Matched as whole words only (see
+// AD_IDEA_PATTERN) so "add", "bad", "adventure", "shadow", "radio", "madrid" and "adiós" never
+// trip it.
 const AD_KEYWORDS = [
-  // English
-  "ad",
-  "ads",
-  "advert",
-  "adverts",
-  "advertisement",
-  "advertisements",
-  "advertise",
-  "advertises",
-  "advertised",
-  "advertising",
-  "commercial",
-  "commercials",
-  "infomercial",
-  "infomercials",
-  "sponsor",
-  "sponsors",
-  "sponsored",
-  "sponsoring",
-  "promo",
-  "promos",
+  // English: ad(s), advert(s), advertise(s/d), advertising, advertisement(s), (info|com)mercial(s),
+  // sponsor(s/ed/ing), promo(s), teleshopping, tv spot, jingle(s).
+  "ad(?:s|vert(?:s|ise[sd]?|ising|isements?)?)?",
+  "(?:com|info)mercials?",
+  "sponsor(?:s|ed|ing)?",
+  "promos?",
   "teleshopping",
   "tv spot",
-  "jingle",
-  "jingles",
-  // Catalan
-  "anunci",
-  "anuncis",
-  "publicitat",
-  "publicitari",
-  "publicitaria",
-  "propaganda",
-  "patrocinat",
-  "patrocinada",
-  "patrocinats",
-  "patrocinades",
-  // Spanish
-  "anuncio",
-  "anuncios",
+  "jingles?",
+  // Catalan + Spanish: anunci(s)/anuncio(s), publicitat/publicitari(o/a), publicidad, propaganda,
+  // patrocinat(s)/patrocinad(a/es/o/os/as).
+  "anunci(?:s|os?)?",
+  "publicita(?:t|ri[oa]?)",
   "publicidad",
-  "publicitario",
-  "publicitaria",
-  "patrocinado",
-  "patrocinada",
-  "patrocinados",
-  "patrocinadas",
+  "propaganda",
+  "patrocina(?:ts?|d(?:as?|es|os?))",
 ] as const;
 
 // \b is ASCII-only in JS, so an accented word right next to a match (e.g. "anunci, adiós!") would

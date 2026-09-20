@@ -2,10 +2,11 @@
  * Whether a NEW steer carries a spoken clip, and what it costs. Silent unless the idea reads as a
  * request for an ad (`isAdIdea`, showrunner.ts); an ad idea gets the same ad-writing agent the
  * karma-gated pitch uses (`writeAdRead`), time-boxed, then synthesised by SLNG (`synthesise`,
- * announcer.ts). Pure and dependency-injected — like say.ts/pitch.ts — so this is testable without
- * Nebius, SLNG or a network: index.ts wires the real functions as `steerVoiceDeps`.
+ * announcer.ts). The two calls that touch the network are dependency-injected — like say.ts/
+ * pitch.ts — so this is testable without Nebius, SLNG or a network: index.ts wires the real
+ * functions as `steerVoiceDeps`.
  */
-import type { SpokenLineOutcome } from "./showrunner";
+import { isAdIdea, type SpokenLineOutcome } from "./showrunner";
 import type { TokenUsage } from "./spend";
 
 /**
@@ -31,7 +32,6 @@ export const SILENT_VOICE: SteerVoiceOutcome = {
 };
 
 export interface SteerVoiceDeps {
-  isAdIdea: (text: string) => boolean;
   writeAdRead: (
     name: string,
     text: string,
@@ -57,7 +57,7 @@ export async function decideSteerVoice(
   deps: SteerVoiceDeps,
   idea: { id: number; name: string; text: string },
 ): Promise<SteerVoiceOutcome> {
-  if (!deps.isAdIdea(idea.text)) return SILENT_VOICE;
+  if (!isAdIdea(idea.text)) return SILENT_VOICE;
   let ad: SpokenLineOutcome;
   try {
     ad = await Promise.race([

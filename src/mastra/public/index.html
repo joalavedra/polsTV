@@ -1829,11 +1829,10 @@
     // is the documented escape hatch for what CSS alone can't express here; mobile's own rules
     // never read --say-form-h, so this has no effect below the desktop breakpoint.
     if (typeof ResizeObserver !== "undefined") {
-      const sayFormResize = new ResizeObserver((entries) => {
-        const height = entries[0]?.borderBoxSize?.[0]?.blockSize ?? sayForm.getBoundingClientRect().height;
-        document.documentElement.style.setProperty("--say-form-h", `${Math.ceil(height)}px`);
-      });
-      sayFormResize.observe(sayForm);
+      new ResizeObserver(() => {
+        const height = Math.ceil(sayForm.getBoundingClientRect().height);
+        document.documentElement.style.setProperty("--say-form-h", `${height}px`);
+      }).observe(sayForm);
     }
 
     // ---------- splash ----------
@@ -2186,17 +2185,13 @@
     // desktop), which used to leave a blank stretch before the -50% loop repeated. Repeating the
     // item set until one pass is at least as wide as the bar, then doubling that for the seamless
     // loop, keeps the crawl full edge-to-edge whatever the item count.
-    function passWidthOf(items) {
+    function repeatsNeeded(items) {
       const probe = document.createElement("div");
       probe.style.cssText = "position:absolute;visibility:hidden;left:-9999px;top:-9999px;display:flex;width:max-content;";
       for (const item of items) probe.appendChild(buildTickerItem(item));
       document.body.appendChild(probe);
-      const width = probe.scrollWidth;
+      const passWidth = probe.scrollWidth || 1;
       probe.remove();
-      return width;
-    }
-    function repeatsNeeded(items) {
-      const passWidth = passWidthOf(items) || 1;
       const barWidth = tickerBar.getBoundingClientRect().width || window.innerWidth;
       return Math.max(1, Math.ceil(barWidth / passWidth));
     }
@@ -2234,8 +2229,7 @@
     // width would measure 0 and force a spurious rebuild; the next time it's shown, this same
     // function runs again (setChromeHidden calls it either direction) and measures for real.
     function recomputeTickerLayout() {
-      if (lastTickerItems.length === 0 || tickerBar.hidden) return;
-      if (!tickerBar.getBoundingClientRect().width) return;
+      if (tickerBar.hidden || !tickerBar.getBoundingClientRect().width) return;
       layoutTicker(lastTickerItems);
     }
     window.addEventListener("resize", recomputeTickerLayout);
