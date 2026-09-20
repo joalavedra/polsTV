@@ -1,7 +1,7 @@
 /**
  * Whether a NEW steer carries a spoken clip, and what it costs. Silent unless the idea reads as a
  * request for an ad (`isAdIdea`, showrunner.ts); an ad idea gets the same ad-writing agent the
- * karma-gated pitch uses (`writeAdRead`), time-boxed, then synthesised by SLNG (`synthesise`,
+ * pitch uses (`writeAdRead`), time-boxed, then synthesised by SLNG (`synthesise`,
  * announcer.ts). The two calls that touch the network are dependency-injected — like say.ts/
  * pitch.ts — so this is testable without Nebius, SLNG or a network: index.ts wires the real
  * functions as `steerVoiceDeps`.

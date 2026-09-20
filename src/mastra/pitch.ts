@@ -1,6 +1,6 @@
 /**
- * The sponsored voice-over ("the pitch"): a viewer with enough karma gets the channel's voice to
- * advertise something of theirs over whatever is on air.
+ * The sponsored voice-over ("the pitch"): any viewer gets the channel's voice to advertise
+ * something of theirs over whatever is on air.
  *
  * `PitchSlot` is the fairness and cost rules — one pitch at a time, a per-user cooldown, and a
  * deadline after which an uncollected pitch is dropped. Pure and synchronous with the clock
@@ -10,7 +10,6 @@
  * ponytail: in-memory only, like the rest of the channel's state.
  */
 import { clip, synthesise } from "./announcer";
-import { channel } from "./channel";
 import type { ModerationOutcome, SpokenLineOutcome } from "./showrunner";
 import { moderatePitch, writeAdRead } from "./showrunner";
 import type { TokenUsage } from "./spend";
@@ -18,8 +17,6 @@ import { spend } from "./spend";
 // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
 import { log } from "./log";
 
-/** Likes needed before a viewer can instruct the voice. Three scenes' worth of other people. */
-export const PITCH_MIN_KARMA = 3;
 export const PITCH_COOLDOWN_MS = 180_000;
 
 /** How long a pitch waits for the broadcaster to collect and play it before it is dropped. */
@@ -49,7 +46,7 @@ export interface PitchStatus {
   state: PitchState;
 }
 
-export type PitchRefusal = "karma" | "cooldown" | "busy" | "rejected" | "unavailable";
+export type PitchRefusal = "cooldown" | "busy" | "rejected" | "unavailable";
 
 export type PitchResult =
   | { ok: true; line: string }
@@ -82,17 +79,8 @@ export class PitchSlot {
    * Claim the slot before any paid work happens. The cooldown starts here rather than on success,
    * so a viewer cannot burn LLM and TTS calls by retrying a pitch that keeps being turned down.
    */
-  reserve(input: { uid: string; name: string; brief: string; karma: number }): Reservation {
+  reserve(input: { uid: string; name: string; brief: string }): Reservation {
     this.sweep();
-    if (input.karma < PITCH_MIN_KARMA) {
-      const short = PITCH_MIN_KARMA - input.karma;
-      return {
-        ok: false,
-        code: "karma",
-        reason:
-          `The pitch needs ${PITCH_MIN_KARMA} karma. You have ${input.karma}, ${short} to go.`,
-      };
-    }
     const cooldown = this.cooldownSeconds(input.uid);
     if (cooldown > 0) {
       const reason = `One pitch every 3 minutes: ${cooldown}s left.`;
@@ -183,7 +171,6 @@ export class PitchSlot {
 }
 
 export interface PitchDeps {
-  karmaOf: (uid: string) => number;
   moderate: (brief: string, name: string) => Promise<ModerationOutcome>;
   writeAdRead: (name: string, brief: string) => Promise<SpokenLineOutcome>;
   synthesise: (clipId: string, line: string) => Promise<string>;
@@ -201,7 +188,7 @@ export async function submitPitch(
   deps: PitchDeps,
   input: { uid: string; name: string; brief: string },
 ): Promise<PitchResult> {
-  const reserved = slot.reserve({ ...input, karma: deps.karmaOf(input.uid) });
+  const reserved = slot.reserve(input);
   if (!reserved.ok) return reserved;
   const { id } = reserved.pitch;
   try {
@@ -236,7 +223,6 @@ export const pitchSlot = new PitchSlot();
 
 /** The live wiring of submitPitch's paid half: Nebius moderation and ad read, SLNG clip, ledger. */
 export const livePitchDeps: PitchDeps = {
-  karmaOf: (uid) => channel.karmaOf(uid),
   moderate: moderatePitch,
   writeAdRead,
   synthesise,

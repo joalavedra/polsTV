@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AddResult, Scene } from "./channel";
 import { STEER_GAP_MS } from "./channel";
-import { PITCH_MIN_KARMA } from "./pitch";
 import {
   displayName,
   myStatsLogic,
@@ -234,14 +233,7 @@ describe("myStatsLogic", () => {
       queued: null,
       onAirNow: false,
       recentScenes: [],
-      pitchUnlocked: true,
     });
-  });
-
-  it("says the pitch is locked below the karma gate and unlocked at it", () => {
-    const at = (karma: number) => myStatsLogic("telegram:1", deps({ karmaOf: () => karma }));
-    expect(at(PITCH_MIN_KARMA - 1).pitchUnlocked).toBe(false);
-    expect(at(PITCH_MIN_KARMA).pitchUnlocked).toBe(true);
   });
 
   it("reports the caller's queued idea with its position", () => {
@@ -372,19 +364,14 @@ describe("sendDM", () => {
 
 describe("pitchToolResult", () => {
   it("hands the agent the ad read the voice will speak", () => {
-    expect(pitchToolResult({ ok: true, line: "A word from Ana. Buy nothing." }, 4)).toEqual({
+    expect(pitchToolResult({ ok: true, line: "A word from Ana. Buy nothing." })).toEqual({
       onAir: true,
       line: "A word from Ana. Buy nothing.",
     });
   });
 
-  it("says how much karma is still missing when the gate refuses", () => {
-    const result = pitchToolResult({ ok: false, code: "karma", reason: "needs 3" }, 1);
-    expect(result).toEqual({ onAir: false, reason: "needs 3", karmaNeeded: PITCH_MIN_KARMA - 1 });
-  });
-
-  it("passes any other refusal straight through without a karma hint", () => {
-    const result = pitchToolResult({ ok: false, code: "busy", reason: "Bob has the slot" }, 9);
+  it("passes a refusal straight through", () => {
+    const result = pitchToolResult({ ok: false, code: "busy", reason: "Bob has the slot" });
     expect(result).toEqual({ onAir: false, reason: "Bob has the slot" });
   });
 });

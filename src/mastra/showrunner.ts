@@ -4,8 +4,8 @@
  * writeSteer() runs when the idea is about to air, because it needs the scene that is on screen then.
  * writeAmend() is the same job for an amend ("Yes, and"): it keeps the scene but changes one thing.
  * isAdIdea() decides whether a NEW idea's text is asking for an ad; only then does the channel's
- * voice speak at all (steer-voice.ts), writing the read with the same writeAdRead() the karma-gated
- * pitch uses (moderatePitch()/writeAdRead(), pitch.ts).
+ * voice speak at all (steer-voice.ts), writing the read with the same writeAdRead() the pitch uses
+ * (moderatePitch()/writeAdRead(), pitch.ts).
  */
 import { Agent } from "@mastra/core/agent";
 import { z } from "zod";

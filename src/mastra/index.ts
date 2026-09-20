@@ -11,7 +11,7 @@ import { clip, synthesise } from "./announcer";
 import type { Idea } from "./channel";
 import { channel } from "./channel";
 import { handleEval, type EvalDeps } from "./eval";
-import { livePitchDeps, PITCH_MIN_KARMA, pitchSlot, submitPitch } from "./pitch";
+import { livePitchDeps, pitchSlot, submitPitch } from "./pitch";
 import type { SteerWriteOutcome } from "./showrunner";
 import { handleSay, type SayDeps, type SayInput, type SayOutcome } from "./say";
 import {
@@ -100,7 +100,6 @@ const pitchResultBody = z.object({
 
 // Which HTTP status each refusal from pitch.ts is worth. Everything else is a 200.
 const pitchStatus = {
-  karma: 403,
   cooldown: 429,
   busy: 409,
   rejected: 422,
@@ -341,10 +340,8 @@ export const mastra = new Mastra({
         handler: async (c) => {
           const viewer = uid.safeParse(c.req.query("uid"));
           if (!viewer.success) return c.json({ ok: false, reason: "Invalid uid." }, 400);
-          const karma = channel.karmaOf(viewer.data);
           return c.json({
-            karma,
-            pitchUnlocked: karma >= PITCH_MIN_KARMA,
+            karma: channel.karmaOf(viewer.data),
             pitchCooldownSeconds: pitchSlot.cooldownSeconds(viewer.data),
           });
         },
