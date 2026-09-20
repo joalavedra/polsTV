@@ -58,11 +58,11 @@ export interface Status {
   live: boolean;
   viewers: number;
   /** The scene on air, with its prompter's current karma so viewers can watch it move. */
-  now: (Scene & { karma: number }) | null;
+  now: (Scene & { karma: number; pid: string }) | null;
   steering: { name: string; text: string; kind: IdeaKind } | null;
-  queue: { id: number; name: string; text: string; karma: number; kind: IdeaKind }[];
-  chat: ChatLine[];
-  rank: { name: string; karma: number }[];
+  queue: { id: number; name: string; text: string; karma: number; kind: IdeaKind; pid: string }[];
+  chat: (ChatLine & { pid: string })[];
+  rank: { name: string; karma: number; pid: string }[];
   ts: number;
 }
 
@@ -315,7 +315,12 @@ export class Channel {
     this.broadcasterSeenAt = this.now();
   }
 
-  status(): Status {
+  /**
+   * `pidOf` maps a uid to its public viewer id (pid.ts). Defaults to an empty string for callers
+   * that don't need it (index.ts's internal reads of its own status), so this stays the only call
+   * site that knows about uid->pid at all — uid itself never appears in the returned Status.
+   */
+  status(pidOf: (uid: string) => string = () => ""): Status {
     const now = this.now();
     for (const [uid, seenAt] of this.viewers) {
       if (now - seenAt > VIEWER_TTL_MS) this.viewers.delete(uid);
@@ -324,7 +329,9 @@ export class Channel {
     return {
       live: now - this.broadcasterSeenAt < BROADCASTER_TTL_MS,
       viewers: this.viewers.size,
-      now: this.scene ? { ...this.scene, karma: this.karmaOf(this.scene.uid) } : null,
+      now: this.scene
+        ? { ...this.scene, karma: this.karmaOf(this.scene.uid), pid: pidOf(this.scene.uid) }
+        : null,
       steering: steeringIdea
         ? { name: steeringIdea.name, text: steeringIdea.text, kind: steeringIdea.kind }
         : null,
@@ -336,15 +343,23 @@ export class Channel {
           text: idea.text,
           karma: this.karmaOf(idea.uid),
           kind: idea.kind,
+          pid: pidOf(idea.uid),
         })),
       // Karma is read at status time so the stars in chat move as likes come in.
-      chat: this.chat.map(({ uid, ...line }) => ({ ...line, karma: this.karmaOf(uid) })),
-      rank: [...this.players.values()]
-        .filter((player) => player.karma > 0)
-        .sort((a, b) => b.karma - a.karma)
-        .slice(0, RANK_KEEP),
+      chat: this.chat.map(({ uid, ...line }) => ({ ...line, karma: this.karmaOf(uid), pid: pidOf(uid) })),
+      rank: [...this.players.entries()]
+        .filter(([, player]) => player.karma > 0)
+        .sort((a, b) => b[1].karma - a[1].karma)
+        .slice(0, RANK_KEEP)
+        .map(([uid, player]) => ({ name: player.name, karma: player.karma, pid: pidOf(uid) })),
       ts: now,
     };
+  }
+
+  /** The name most recently seen for a uid, or undefined if they have never contributed. Used by
+   * GET /profile/:pid to name a viewer who has karma but no aired scenes of their own yet. */
+  playerName(uid: string): string | undefined {
+    return this.players.get(uid)?.name;
   }
 
   private player(uid: string, name: string): { name: string; karma: number } {

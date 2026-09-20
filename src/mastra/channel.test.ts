@@ -377,7 +377,7 @@ describe("likes and karma", () => {
     ctx.channel.like("bob");
     air(ctx, "ana", "a dog");
     expect(ctx.channel.like("bob")).toBe(true);
-    expect(ctx.channel.status().rank).toEqual([{ name: "ANA", karma: 2 }]);
+    expect(ctx.channel.status().rank).toEqual([{ name: "ANA", karma: 2, pid: "" }]);
   });
 });
 
@@ -399,5 +399,27 @@ describe("presence", () => {
     expect(ctx.channel.status().live).toBe(true);
     ctx.tick(16_000);
     expect(ctx.channel.status().live).toBe(false);
+  });
+});
+
+describe("pid on status", () => {
+  it("maps every uid through the given pidOf, never leaking the uid itself", () => {
+    const ctx = setup();
+    air(ctx, "ana", "a cat");
+    ctx.channel.like("bob");
+    const pidOf = (uid: string) => `pid-${uid}`;
+    const status = ctx.channel.status(pidOf);
+    expect(status.now?.pid).toBe("pid-ana");
+    expect(status.chat[0]?.pid).toBe("pid-ana");
+    expect(status.rank[0]?.pid).toBe("pid-ana");
+    // chat/rank never carried uid before pid existed, and still don't now that pid is added.
+    expect(status.chat[0]).not.toHaveProperty("uid");
+    expect(status.rank[0]).not.toHaveProperty("uid");
+  });
+
+  it("defaults pid to an empty string when no pidOf is given", () => {
+    const ctx = setup();
+    air(ctx, "ana", "a cat");
+    expect(ctx.channel.status().now?.pid).toBe("");
   });
 });
