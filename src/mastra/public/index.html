@@ -46,9 +46,10 @@
        all clear it consistently instead of guessing at three different pixel counts. */
     --inputbar-h: 64px;
     /* Desktop-only: the composer's real rendered height, published by a ResizeObserver on
-       #say-form (its amend-toggle row height varies with --side-col-w). Defaults to
+       #say-form (its #pitch-btn row height varies with --side-col-w). Defaults to
        --inputbar-h until the observer's first measurement lands. Mobile ignores this var and
-       keeps --inputbar-h, since its amend-toggle is absolutely positioned out of flow. */
+       keeps --inputbar-h — its #pitch-btn is an inline chip, sized within the same row as the
+       input/mic/Say, not an extra row. */
     --say-form-h: var(--inputbar-h);
     /* ticker:start — layout contract for the photo-slot banner, a fixed OVERLAY that never
        resizes the video or pushes the input bar/panel. --ticker-h is the banner's own height
@@ -282,10 +283,6 @@
   }
   #viewer-pill { display: none; }
   #interface-btn { display: none; }
-  /* Desktop-only entry point for the pitch modal (mobile keeps it in the more-sheet only —
-     see #more-pitch-btn). Same base-hidden / desktop-shown pattern as its .top-right neighbours
-     above, so it never needs a mobile-specific override. */
-  #pitch-btn { display: none; }
   #spend-pill { font-weight: 700; font-variant-numeric: tabular-nums; }
 
   #spend-popover, #share-popover {
@@ -590,15 +587,13 @@
       transition: bottom .2s ease;
     }
     #stage-caption { bottom: calc(var(--inputbar-h) + env(safe-area-inset-bottom, 0px)); padding-top: 56px; }
-    /* Mobile's rail is like/chat/more — spend, share and pitch all live in the more-sheet
-       (pitch is the top-right pill, already hidden below desktop by default). */
+    /* Mobile's rail is like/chat/more — spend and share live in the more-sheet (pitch has its
+       own compact chip in the composer, see #pitch-btn, plus the more-sheet row too). */
     #spend-pill, #share-btn { display: none; }
     #more-btn { display: flex; }
 
     #say-input { font-size: 16px; }
     #say-form { padding-bottom: calc(.75rem + env(safe-area-inset-bottom, 0px)); }
-    /* .amend-toggle's hide-until-focused behaviour lives further down (after its base rule),
-       so its plain `display: none` there wins the cascade against the base `display: flex`. */
 
     #pane-chat:empty::after { content: "No ideas yet. Send the first one."; }
     #pane-queue:empty::after { content: "Nothing queued. Send an idea to start it."; }
@@ -638,7 +633,6 @@
 
     /* position/left/right/bottom already come from the base #say-form rule above. */
     #say-form { padding-bottom: env(safe-area-inset-bottom, 0px); }
-    .amend-toggle { display: none !important; }
 
     #panel {
       right: 0;
@@ -758,6 +752,10 @@
     cursor: pointer;
   }
   #say-btn:disabled, #say-input:disabled { opacity: .6; cursor: not-allowed; }
+  /* Mobile default: a compact chip at the start of the input row (see pitch:start below for the
+     button's own gradient/sheen look). The >820px block overrides this to a full-width row. */
+  #pitch-btn { flex: 0 0 auto; padding: .5rem .6rem; font-size: .8rem; }
+  .pitch-label-full { display: none; }
 
   /* adbanner:start — on-screen AD slate, up for as long as the clip the channel's voice is
      reading (server-side, ad-banner.ts). Self-contained, safe to drop in a conflict. Stacks
@@ -1112,7 +1110,7 @@
      look, instead of the two hover rules the page had before. Grouped into shared selector lists
      rather than repeated per-button. Hover is gated on (hover: hover) so a phone tap never gets
      stuck showing it; :active gives instant press feedback everywhere reduced-motion or not. ---------- */
-  .pill-btn, .rail-item, .rail-icon, .tab, .mode-btn, #say-btn, #mic-btn, .modal-actions button,
+  .pill-btn, .rail-item, .rail-icon, .tab, #say-btn, #mic-btn, #pitch-btn, .modal-actions button,
   #splash-tap, .sheet-row, #spend-close, #drawer-close, #share-copy, #share-telegram {
     transition: transform .14s ease-out, background-color .14s ease-out, border-color .14s ease-out,
       box-shadow .14s ease-out, color .14s ease-out;
@@ -1121,7 +1119,6 @@
     .pill-btn:hover { background: rgba(255, 255, 255, .12); }
     .rail-item:not(:disabled):hover .rail-icon { background: rgba(255, 255, 255, .24); border-color: rgba(255, 255, 255, .5); }
     .tab:not([aria-selected="true"]):hover { background: rgba(255, 255, 255, .08); color: var(--text); }
-    .mode-btn:not(:disabled):not([aria-pressed="true"]):hover { background: rgba(255, 255, 255, .08); color: var(--text); }
     #say-btn:not(:disabled):hover, #splash-tap:hover, .modal-actions button:not(:disabled):hover {
       filter: brightness(1.12);
     }
@@ -1131,31 +1128,34 @@
     #share-copy:hover, #share-telegram:hover { color: var(--accent); background: rgba(255, 255, 255, .06); }
   }
   .pill-btn:active, .rail-item:not(:disabled):active, .tab:active,
-  .mode-btn:not(:disabled):active, #say-btn:not(:disabled):active, #mic-btn:not(:disabled):active,
+  #say-btn:not(:disabled):active, #mic-btn:not(:disabled):active, #pitch-btn:not(:disabled):active,
   .modal-actions button:not(:disabled):active, #splash-tap:active, .sheet-row:active,
   #spend-close:active, #drawer-close:active, #share-copy:active, #share-telegram:active {
     transform: scale(.96);
   }
   /* Primary actions pick up the loud ticker palette (Task 1) so the page reads as one system:
-     a chunky offset shadow that flattens on press, --accent stays the base fill. */
-  #say-btn, #splash-tap, .modal-actions button[type="submit"] {
+     a chunky offset shadow that flattens on press, --accent stays the base fill. #pitch-btn joins
+     this group for the same chunky press feel; its own gradient/sheen live in pitch:start below. */
+  #say-btn, #splash-tap, #pitch-btn, .modal-actions button[type="submit"] {
     box-shadow: 2px 2px 0 rgba(0, 0, 0, .55);
   }
   @media (hover: hover) {
-    #say-btn:not(:disabled):hover, #splash-tap:hover, .modal-actions button[type="submit"]:not(:disabled):hover {
+    #say-btn:not(:disabled):hover, #splash-tap:hover, #pitch-btn:not(:disabled):hover,
+    .modal-actions button[type="submit"]:not(:disabled):hover {
       box-shadow: 3px 3px 0 rgba(0, 0, 0, .55);
     }
   }
-  #say-btn:not(:disabled):active, #splash-tap:active, .modal-actions button[type="submit"]:not(:disabled):active {
+  #say-btn:not(:disabled):active, #splash-tap:active, #pitch-btn:not(:disabled):active,
+  .modal-actions button[type="submit"]:not(:disabled):active {
     box-shadow: 1px 1px 0 rgba(0, 0, 0, .55);
   }
   @media (prefers-reduced-motion: reduce) {
-    .pill-btn, .rail-item, .rail-icon, .tab, .mode-btn, #say-btn, #mic-btn, .modal-actions button,
+    .pill-btn, .rail-item, .rail-icon, .tab, #say-btn, #mic-btn, #pitch-btn, .modal-actions button,
     #splash-tap, .sheet-row, #spend-close, #drawer-close, #share-copy, #share-telegram {
       transition: background-color .14s ease-out, border-color .14s ease-out, box-shadow .14s ease-out,
         color .14s ease-out;
     }
-    .pill-btn:active, .rail-item:active, .tab:active, .mode-btn:active, #say-btn:active,
+    .pill-btn:active, .rail-item:active, .tab:active, #say-btn:active, #pitch-btn:active,
     #mic-btn:active, .modal-actions button:active, #splash-tap:active, .sheet-row:active,
     #spend-close:active, #drawer-close:active, #share-copy:active, #share-telegram:active {
       transform: none;
@@ -1272,8 +1272,52 @@
   /* ticker:end */
 
   /* pitch:start — sponsored voice-over, open to everyone. Self-contained, safe to drop in a
-     conflict. #pitch-btn's own look now comes from .pill/.pill-btn (top-right, desktop only) and
-     .sheet-row (#more-pitch-btn, the mobile overflow-sheet entry point). */
+     conflict. #pitch-btn is the composer's shiny "make an ad" trigger (row 1 on desktop, a
+     compact chip at the start of the mobile input row — placement rules live with #say-form
+     above/below; only the button's own gradient/sheen/press look is here) and shares its
+     handler with .sheet-row's #more-pitch-btn, the mobile overflow-sheet entry point. Sheen
+     is a translateX-only sweep on ::after so it costs nothing on phones: no background-position
+     animation, no filter/blur/box-shadow animation. Gradient text (#14141c on hot-pink/electric
+     -yellow) holds >= 4.5:1 contrast at both ends. */
+  #pitch-btn {
+    position: relative;
+    overflow: hidden;
+    border: none;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #ff2ec4 0%, #fff200 100%);
+    color: #14141c;
+    font-family: var(--display-font);
+    font-weight: 400;
+    letter-spacing: .02em;
+    cursor: pointer;
+  }
+  #pitch-btn::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 45%;
+    background: linear-gradient(115deg, transparent, rgba(255, 255, 255, .7), transparent);
+    transform: translateX(-220%);
+    pointer-events: none;
+    animation: pitch-sheen 3.2s ease-in-out infinite;
+  }
+  @keyframes pitch-sheen {
+    0% { transform: translateX(-220%); }
+    22% { transform: translateX(220%); }
+    100% { transform: translateX(220%); }
+  }
+  @media (hover: hover) {
+    /* :not(:active) so a real click's press state (shared list, Interactive states above) always
+       wins the transform instead of fighting this lift. */
+    #pitch-btn:not(:disabled):hover:not(:active) { transform: translateY(-1px); filter: brightness(1.08); }
+  }
+  #pitch-btn:disabled { opacity: .5; cursor: not-allowed; }
+  #pitch-btn:disabled::after { animation: none; opacity: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    #pitch-btn::after { animation: none; opacity: 0; }
+  }
   #pitch-modal {
     position: fixed;
     inset: 0;
@@ -1288,25 +1332,9 @@
   #toast-region .toast { max-width: min(90vw, 32rem); }
   /* pitch:end */
 
-  /* amend:start — "Yes, and": change one thing about the scene on air. Self-contained, safe to
-     drop in a conflict, mirrors the pitch:start/end block above. Desktop default: always visible,
-     beside the input field. Mobile (further down, after this rule so it wins the cascade tie)
-     hides it until the field is focused, as two small chips above the field. */
-  .amend-toggle { display: flex; gap: .3rem; }
-  .mode-btn {
-    border-radius: 999px;
-    border: 1px solid var(--panel-border);
-    background: transparent;
-    color: var(--text-dim);
-    font: inherit;
-    font-size: .72rem;
-    font-weight: 700;
-    white-space: nowrap;
-    padding: .4rem .7rem;
-    cursor: pointer;
-  }
-  .mode-btn[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .mode-btn:disabled { opacity: .45; cursor: not-allowed; }
+  /* amend:start — display-only now: amends still arrive from the Telegram bot, so the caption's
+     "+N changes" chip and the queue/steering "change" tag stay. The web control that used to let
+     Say pick new-vs-amend was removed (owner's call, demo day) — Say always sends a new scene. */
   .kind-tag {
     display: inline-block;
     background: var(--accent);
@@ -1321,16 +1349,6 @@
     vertical-align: middle;
   }
   #caption-amends-chip { margin-left: .3rem; }
-  @media (max-width: 820px) {
-    .amend-toggle {
-      position: absolute;
-      bottom: 100%;
-      left: 0;
-      margin-bottom: .4rem;
-      display: none;
-    }
-    #say-form:focus-within .amend-toggle { display: flex; }
-  }
   /* amend:end */
   /* voice:start — hold-to-talk mic (SLNG STT via POST say-voice). Self-contained, safe to drop
      in a conflict. Fixed circle size, no extra flex width, so it can't push Say off at 360px. */
@@ -1564,7 +1582,6 @@
     .top-right { top: 14px; right: 20px; }
     #viewer-pill { display: inline-flex; }
     #interface-btn { display: inline-flex; }
-    #pitch-btn { display: inline-flex; }
 
     /* ---- Action rail: overlays the video's right edge, vertically centred-low.
        Anchored by top+bottom (not top:58%+translateY, which had no ceiling and let the rail run
@@ -1595,7 +1612,7 @@
       pointer-events: none;
     }
     /* Desktop rail is like/share/spend only — comments are gone (the chat column is always
-       visible here) and pitch is the .top-right pill above, not a rail item. */
+       visible here) and pitch is the composer's #pitch-btn row, not a rail item. */
     #more-btn, #chat-count-btn { display: none; }
     #spend-pill { display: flex; }
 
@@ -1615,7 +1632,7 @@
       top: calc(var(--topbar-h) + 34vh);
       /* Clears the composer's real height (--say-form-h, kept live by a ResizeObserver — see
          the JS), not just the ticker: #say-form is a sibling overlapping the same fixed bottom
-         edge, and its amend-toggle row can wrap depending on --side-col-w, so a fixed constant
+         edge, and its #pitch-btn row can wrap depending on --side-col-w, so a fixed constant
          isn't reliable here the way mobile's --inputbar-h is. */
       bottom: var(--say-form-h);
       height: auto;
@@ -1696,10 +1713,9 @@
     }
 
     /* ---- Composer: a tidy two-row grid instead of a flex-wrap row that could grow to any
-       height (the amend-toggle used to wrap onto its own line and get covered by the panel's
-       chat pane, since neither cleared the other). Row 1 is the amend toggle spanning the full
-       width; row 2 is the input + mic + Say button, all at the same 44px height. The sr-only
-       label is position:absolute in the HTML, so it takes no grid cell. */
+       height. Row 1 is the shiny #pitch-btn spanning the full width; row 2 is the input + mic +
+       Say button, all at the same 44px height. The sr-only label is position:absolute in the
+       HTML, so it takes no grid cell. */
     #say-form {
       left: auto;
       right: 0;
@@ -1715,8 +1731,15 @@
       -webkit-backdrop-filter: blur(14px);
       border-top: 1px solid var(--panel-border);
     }
-    #say-form .amend-toggle { grid-column: 1 / -1; }
-    #say-form .amend-toggle .mode-btn { flex: 1; text-align: center; }
+    #say-form #pitch-btn {
+      grid-column: 1 / -1;
+      width: 100%;
+      height: 44px;
+      padding: 0 1rem;
+      font-size: 1rem;
+    }
+    .pitch-label-full { display: inline; }
+    .pitch-label-chip { display: none; }
     #say-form #say-input, #say-form #say-btn { height: 44px; }
   }
 
@@ -1801,9 +1824,6 @@
 
     <div class="top-right chrome">
       <div class="pill" id="viewer-pill"><span id="viewer-count">0 watching</span></div>
-      <!-- pitch:start -->
-      <button type="button" class="pill pill-btn" id="pitch-btn">make an ad</button>
-      <!-- pitch:end -->
       <button type="button" class="pill pill-btn" id="mute-btn" aria-pressed="false">mute</button>
       <button type="button" class="pill pill-btn" id="interface-btn" aria-pressed="false">interface</button>
     </div>
@@ -1903,13 +1923,9 @@
   <!-- Pinned input bar: a sibling of the sheet/panel (not nested in it) so it stays visible and
        usable whether the sheet is open or closed, at every breakpoint. -->
   <form id="say-form">
-    <!-- amend:start -->
-    <div class="amend-toggle" role="group" aria-label="Contribution mode">
-      <button type="button" id="mode-new-btn" class="mode-btn" aria-pressed="true">new scene</button>
-      <button type="button" id="mode-amend-btn" class="mode-btn" aria-pressed="false" disabled
-        title="Nothing is on air to change yet">change this scene</button>
-    </div>
-    <!-- amend:end -->
+    <!-- pitch:start -->
+    <button type="button" id="pitch-btn" aria-label="Make an ad"><span class="pitch-label-full">make an ad</span><span class="pitch-label-chip">ad</span></button>
+    <!-- pitch:end -->
     <label for="say-input" class="sr-only" style="position:absolute;left:-9999px;">
       What should happen next
     </label>
@@ -2183,7 +2199,7 @@
     splashWordmark.textContent = APP_NAME;
 
     // ---------- desktop composer height ----------
-    // #say-form is a sibling of #panel, not a child, and its amend-toggle row can wrap depending
+    // #say-form is a sibling of #panel, not a child, and its #pitch-btn row can wrap depending
     // on --side-col-w — so #panel (desktop CSS) can't clear it with a fixed constant the way
     // mobile's --inputbar-h does. Measuring it and publishing the real height as a CSS variable
     // is the documented escape hatch for what CSS alone can't express here; mobile's own rules
@@ -2802,33 +2818,6 @@
     interfaceBtn.title = "Toggle pure-TV interface (I)";
     sayInput.title = "Focus the input (/)";
 
-    // amend:start — "Yes, and": a two-state toggle for whether Say sends a new scene or a change
-    // to the one on air. Self-contained; postIdea (below) reads sayKind when it sends.
-    const modeNewBtn = document.getElementById("mode-new-btn");
-    const modeAmendBtn = document.getElementById("mode-amend-btn");
-    let sayKind = "new";
-    function setSayKind(kind) {
-      sayKind = kind;
-      modeNewBtn.setAttribute("aria-pressed", String(kind === "new"));
-      modeAmendBtn.setAttribute("aria-pressed", String(kind === "amend"));
-      sayInput.placeholder = kind === "amend"
-        ? "Change one thing about what's on screen…"
-        : "What should happen next…";
-    }
-    modeNewBtn.addEventListener("click", () => setSayKind("new"));
-    modeAmendBtn.addEventListener("click", () => setSayKind("amend"));
-    // Amending needs a scene on air to target; falls back to "new scene" if its target disappears
-    // (the scene ended) while the toggle was still set to amend.
-    function renderAmendToggle(now) {
-      const canAmend = Boolean(now);
-      modeAmendBtn.disabled = !canAmend;
-      modeAmendBtn.title = canAmend
-        ? "Change one thing about the scene on air"
-        : "Nothing is on air to change yet";
-      if (!canAmend && sayKind === "amend") setSayKind("new");
-    }
-    // amend:end
-
     // ---------- posting ideas ----------
     function showToast(message) {
       const toast = h("div", "toast", message);
@@ -2859,7 +2848,9 @@
     }
     async function postIdea(name, text) {
       setSaying(true);
-      const { status, data } = await postJSONSafe("say", { uid, name, text, source: "web", kind: sayKind });
+      // No "kind": Say always sends a new scene now — the server defaults kind to "new" (sayBody
+      // in src/mastra/index.ts).
+      const { status, data } = await postJSONSafe("say", { uid, name, text, source: "web" });
       setSaying(false);
       if (status === 200) {
         sayInput.value = "";
@@ -2889,7 +2880,7 @@
 
     // pitch:start — sponsored voice-over, open to everyone. Self-contained; renderStatus calls
     // renderPitchBadge, everything else lives here. Two entry points share this state: the
-    // top-right pill (desktop only) and the "Pitch" row in mobile's more-sheet.
+    // composer's #pitch-btn (every breakpoint) and the "Pitch" row in mobile's more-sheet.
     const ME_POLL_MS = 5000;
     const pitchBtn = document.getElementById("pitch-btn");
     const morePitchBtn = document.getElementById("more-pitch-btn");
@@ -2919,7 +2910,7 @@
 
     function openPitchModal() {
       if (pitchCooldownSeconds > 0) {
-        showToast(`One ad every 30 seconds: ${pitchCooldownSeconds}s left.`);
+        showToast(`One ad every 10 seconds: ${pitchCooldownSeconds}s left.`);
         return;
       }
       if (!getName()) {
@@ -3561,7 +3552,6 @@
       renderLivePill(statusLive, status.viewers);
       diffLikesAndKarma(previousNow, status.now);
       renderCaption(status.now);
-      renderAmendToggle(status.now); // amend
       renderLikeButton();
       renderPitchBadge(status.pitch); // pitch
       renderAdBanner(status.ad, status.ts); // adbanner
