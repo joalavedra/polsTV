@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AddResult } from "./channel";
 import { handleSay } from "./say";
-import type { SayDeps } from "./say";
+import type { SayDeps, SayOutcome } from "./say";
 
 const ZERO_USAGE = { inputTokens: 0, outputTokens: 0 };
 
@@ -43,7 +43,13 @@ describe("handleSay voice branch (stt attribution)", () => {
     const d = deps({
       addIdea: vi.fn((): AddResult => ({ ok: false, reason: "already queued" })),
     });
-    const outcome = await handleSay(d, input, { audioSeconds: 2 });
+    let outcome: SayOutcome;
+    try {
+      // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+      outcome = await handleSay(d, input, { audioSeconds: 2 });
+    } catch (error) {
+      throw new Error("handleSay rejected; it must resolve to an outcome here", { cause: error });
+    }
     expect(outcome).toEqual({ status: 409, body: { ok: false, reason: "already queued" } });
     expect(d.recordStt).toHaveBeenCalledWith("rejected", "Ana", "a cat", 2);
   });
@@ -54,7 +60,13 @@ describe("handleSay voice branch (stt attribution)", () => {
         throw new Error("nebius down");
       }),
     });
-    const outcome = await handleSay(d, input, { audioSeconds: 5 });
+    let outcome: SayOutcome;
+    try {
+      // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+      outcome = await handleSay(d, input, { audioSeconds: 5 });
+    } catch (error) {
+      throw new Error("handleSay rejected; it must resolve to an outcome here", { cause: error });
+    }
     expect(outcome.status).toBe(503);
     expect(d.recordStt).toHaveBeenCalledWith("rejected", "Ana", "a cat", 5);
   });

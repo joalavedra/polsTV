@@ -29,6 +29,21 @@ describe("synthesise", () => {
     await expect(synthesise("clip-c", "hello")).rejects.toThrow(/SLNG_API_KEY/);
   });
 
+  it("wraps a network failure with clip context and the original cause", async () => {
+    vi.stubEnv("SLNG_API_KEY", "test-key");
+    const networkError = new Error("ECONNRESET");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw networkError;
+      }),
+    );
+    await expect(synthesise("clip-network", "hello")).rejects.toThrow(/clip-network/);
+    await expect(synthesise("clip-network", "hello")).rejects.toMatchObject({
+      cause: networkError,
+    });
+  });
+
   it("prepends the silent [excited] tone marker to the text sent to SLNG", async () => {
     vi.stubEnv("SLNG_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => {

@@ -13,7 +13,7 @@ import { channel } from "./channel";
 import { handleEval, type EvalDeps } from "./eval";
 import { livePitchDeps, PITCH_MIN_KARMA, pitchSlot, submitPitch } from "./pitch";
 import type { SteerWriteOutcome } from "./showrunner";
-import { handleSay, type SayDeps, type SayInput } from "./say";
+import { handleSay, type SayDeps, type SayInput, type SayOutcome } from "./say";
 import {
   amendWriter,
   MAX_IDEA_CHARS,
@@ -387,7 +387,17 @@ export const mastra = new Mastra({
           if (client && postTooSoon(client)) {
             return c.json({ ok: false, reason: "Slow down a little." }, 429);
           }
-          const outcome = await handleSay(sayDeps, body.data);
+          let outcome: SayOutcome;
+          try {
+            // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+            outcome = await handleSay(sayDeps, body.data);
+          } catch (error) {
+            console.error(`/say failed for uid=${body.data.uid}:`, error);
+            return c.json(
+              { ok: false, reason: "Something went wrong on our side. Try again." },
+              500,
+            );
+          }
           return c.json(outcome.body, outcome.status);
         },
       }),
