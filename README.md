@@ -75,6 +75,12 @@ on air or pending at a time, one per viewer every three minutes, and a pitch nob
 60 seconds is dropped and the viewer told. The broadcaster plays spoken clips strictly one after
 another, so a pitch never talks over a steer's ad read.
 
+Every ad read is hard-stopped at 10 seconds (`AD_MAX_MS`, `broadcaster.html`), cutting a long read
+rather than letting it run — the 25-word cap keeps this rare. The moment a clip actually starts
+playing, the broadcaster reports it to the server (`POST /b/:secret/clip-started`), which puts an
+"AD" banner on screen over the picture (`ad-banner.ts`, `index.html`) for the same 10 seconds, so
+the voice and the banner always go quiet together.
+
 ### Why Director, not a text-to-video call
 
 A "simple text-to-video call" would generate an independent clip per idea and queue them: a hard cut
@@ -219,7 +225,8 @@ src/mastra/
 ├── channel.ts             In-memory state machine: idea queue, steer lifecycle, likes, karma
 ├── pitch.ts               The karma-gated sponsored voice-over: slot, cooldown, deadline
 ├── showrunner.ts          The five Nebius agents: moderation, steering, amends, the pitch and ad
-├── announcer.ts           SLNG TTS: synthesises and serves the spoken clips
+├── announcer.ts           SLNG TTS: synthesises and serves the spoken clips (and their clean lines)
+├── ad-banner.ts           On-screen AD banner state: which line is airing, until when
 ├── telegram.ts            Telegram channel: showrunner agent, its tools, proactive DMs
 ├── vonage.ts              Vonage session creation and token minting
 └── public/
