@@ -43,9 +43,9 @@ function airborne(ctx: ReturnType<typeof setup>, uid = "ana") {
 describe("cooldown", () => {
   it("holds a viewer off until the cooldown has fully elapsed", () => {
     const ctx = setup();
-    airborne(ctx);
+    const pitch = airborne(ctx);
     ctx.slot.take();
-    ctx.slot.release(1);
+    ctx.slot.release(pitch.id);
     ctx.tick(PITCH_COOLDOWN_MS - 1);
     expect(ctx.slot.cooldownSeconds("ana")).toBe(1);
     expect(ctx.reserve().ok).toBe(false);
