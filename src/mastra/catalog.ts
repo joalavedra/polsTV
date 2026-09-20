@@ -19,6 +19,10 @@ export const CATALOG_ATTRIBUTION = {
 const TIMEOUT_MS = 5_000;
 const MAX_OVERVIEW_CHARS = 200;
 const WIKI_USER_AGENT = "polsTV/1.0 (https://github.com/joalavedra/polsTV)";
+// An item's posterUrl is set from an upstream response and then becomes an <img src> on a page, so
+// it is pinned to the image hosts these two sources actually serve from. An item whose poster is
+// anywhere else is dropped, the same as one with no poster at all.
+const POSTER_HOSTS = new Set(["static.tvmaze.com", "upload.wikimedia.org"]);
 
 export type MediaType = "movie" | "tv";
 
@@ -67,6 +71,16 @@ function clipOverview(text: string): string {
   return text.slice(0, MAX_OVERVIEW_CHARS);
 }
 
+/** True only for an https URL on one of POSTER_HOSTS. Exported for catalog.test.ts. */
+export function isAllowedPosterUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" && POSTER_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 function dedupe(items: CatalogItem[]): CatalogItem[] {
   const seen = new Set<string>();
   const out: CatalogItem[] = [];
@@ -101,7 +115,7 @@ interface TvmazeScheduleEntry {
 
 /** Poster required, adult genre excluded — same two rules the original brief asked TMDB for. */
 function normaliseShow(show: TvmazeShow): CatalogItem | undefined {
-  if (!show.image?.original) return undefined;
+  if (!show.image?.original || !isAllowedPosterUrl(show.image.original)) return undefined;
   if (show.genres.some((g) => g.toLowerCase() === "adult")) return undefined;
   const year = show.premiered ? Number(show.premiered.slice(0, 4)) : undefined;
   return {
@@ -231,7 +245,7 @@ const FILM_DESCRIPTION_RE = new RegExp(`^(19|20)\\d{2}\\b.*\\bfilms?\\b(?!\\s+($
 /** Accepted only when Wikipedia's own description says this page is a film, and it has a poster. */
 function normaliseFilmSummary(summary: WikiSummary): CatalogItem | undefined {
   if (!summary.description || !FILM_DESCRIPTION_RE.test(summary.description)) return undefined;
-  if (!summary.thumbnail?.source) return undefined;
+  if (!summary.thumbnail?.source || !isAllowedPosterUrl(summary.thumbnail.source)) return undefined;
   const year = yearFromDescription(summary.description);
   return {
     id: `wiki:${summary.title}`,
@@ -284,7 +298,9 @@ export async function lookupCandidates(candidates: CandidateTitle[]): Promise<Ca
  */
 export async function detailsById(id: string, mediaType: MediaType): Promise<CatalogItem | undefined> {
   try {
-    if (mediaType === "tv" && id.startsWith("tv:")) {
+    if (mediaType === "tv" && /^tv:\d+$/.test(id)) {
+      // Digits only: the id reaches here straight from a client's `about` field, and anything else
+      // would be pasted into the request path (`tv:../schedule` resolves to another endpoint).
       const show = (await getJson(`https://api.tvmaze.com/shows/${id.slice(3)}`)) as TvmazeShow;
       return normaliseShow(show);
     }

@@ -89,6 +89,28 @@ describe("lookupCandidates: TVmaze (series)", () => {
     expect(items).toEqual([]);
   });
 
+  it("drops a show whose poster is not on an expected image host", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routeFetch([
+        {
+          match: /search\/shows/,
+          respond: () =>
+            jsonResponse([
+              {
+                score: 1,
+                show: tvmazeShow({
+                  image: { medium: "https://evil.example/m.jpg", original: "https://evil.example/o.jpg" },
+                }),
+              },
+            ]),
+        },
+      ]),
+    );
+    const items = await lookupCandidates([{ title: "Severance", mediaType: "tv" }]);
+    expect(items).toEqual([]);
+  });
+
   it("excludes a show whose genres include Adult", async () => {
     vi.stubGlobal(
       "fetch",
