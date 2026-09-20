@@ -5,6 +5,8 @@
  *
  * ponytail: clips live in memory, newest few only. They are played once, seconds after creation.
  */
+// Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+import { log } from "./log";
 
 const TTS_URL = "https://eu-west.api.slng.ai/v1/tts/slng/fish/tts:s2.1-pro";
 const CLIPS_KEPT = 8;
@@ -50,7 +52,8 @@ export async function synthesise(clipId: string, line: string): Promise<string> 
     throw new Error(`SLNG TTS response body read failed for clip ${clipId}`, { cause: error });
   }
   // Kept as a log line on purpose: these are the latency numbers the SLNG submission asks for.
-  console.info(
+  // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+  log.info(
     `slng_tts ms=${Math.round(performance.now() - startedAt)} bytes=${audio.length} chars=${spoken.length}`,
   );
   clips.set(clipId, audio);

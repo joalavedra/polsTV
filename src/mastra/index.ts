@@ -403,7 +403,7 @@ export const mastra = new Mastra({
             // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
             outcome = await handleSay(sayDeps, body.data);
           } catch (error) {
-            console.error(`/say failed for uid=${body.data.uid}:`, error);
+            log.error(`/say failed for uid=${body.data.uid}:`, error, { uid: body.data.uid });
             return c.json(
               { ok: false, reason: "Something went wrong on our side. Try again." },
               500,

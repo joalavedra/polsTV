@@ -395,11 +395,11 @@ export async function routeDirectMessage<
       const result = await handlePhotoSubmission(deps.photo, photoIntake);
       await thread.post(result.reply);
     } catch (error) {
-      console.error(`telegram photo pipeline failed for ${message.author.userName}:`, error);
+      log.error(`telegram photo pipeline failed for ${message.author.userName}:`, error);
       try {
         await thread.post("Something went wrong with that photo. Try again.");
       } catch (postError) {
-        console.error(
+        log.error(
           `failed to notify ${message.author.userName} after photo pipeline error:`,
           postError,
         );
