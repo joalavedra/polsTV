@@ -1038,14 +1038,27 @@
   @media (max-width: 820px) {
     #ticker-bar { padding: 4px 8px calc(4px + env(safe-area-inset-bottom, 0px)); border-top-width: 3px; }
   }
-  /* Slots, not a crawl: arrival order left-to-right, items append to the right and closing gaps
-     when one expires (a plain flex row does both for free). Never scrolls or repeats copies; if
-     more arrive than fit the row just clips (overflow: hidden on the bar above). */
+  /* Slots, rotating: arrival order left-to-right. The track holds one or more repeats of the
+     current item set (enough to fill the bar edge to edge, see TICKER_PX_PER_SEC/rebuildTickerTrack
+     below) twice over, back to back, and scrolls linearly by exactly one repeated set's width —
+     -50% of the track's own (content-sized, see width: max-content) box — so the loop is seamless.
+     Slot dimensions never change: rotation and repetition only add/move copies. */
   #ticker-track {
     display: flex;
     align-items: flex-start;
     gap: .6rem;
     height: 100%;
+    width: max-content;
+    will-change: transform;
+  }
+  @keyframes ticker-scroll {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* No scrolling: rebuildTickerTrack renders a single, unrepeated pass for this case, and this
+       is belt-and-braces against any inline animation JS may have set before this query matched. */
+    #ticker-track { animation: none !important; transform: none !important; }
   }
   .ticker-item {
     display: flex;
@@ -1053,17 +1066,6 @@
     align-items: center;
     flex: none;
     width: 88px;
-    animation: ticker-item-in .2s ease-out;
-  }
-  .ticker-item.leaving { animation: ticker-item-out .2s ease-in forwards; }
-  @keyframes ticker-item-in {
-    from { opacity: 0; transform: translateY(6px) scale(.92); }
-  }
-  @keyframes ticker-item-out {
-    to { opacity: 0; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .ticker-item, .ticker-item.leaving { animation: none; }
   }
   .ticker-thumb {
     width: 88px;
@@ -2062,6 +2064,7 @@
       interfaceBtn.setAttribute("aria-pressed", String(hidden));
       moreInterfaceBtn.setAttribute("aria-pressed", String(hidden));
       if (hidden) closeSpendPopover({ returnFocus: false });
+      refreshTickerLayout(); // ticker: recompute k once the bar's width settles either way
     }
     interfaceBtn.addEventListener("click", () => setChromeHidden(!isChromeHidden()));
     moreInterfaceBtn.addEventListener("click", () => {
@@ -2317,18 +2320,25 @@
       closeSpendPopover({ returnFocus: false });
     });
 
-    // ticker:start — slots of shared Telegram photos, overlaid on the bottom of the video. Polls
-    // GET ticker every 1s (roughly matching the server's 5s TTL — see ticker.ts) but only ever
-    // touches the DOM for ids that actually changed: a new id is appended to the right (arrival
-    // order, the same order the server returns them in), a gone id fades out and is removed, and
-    // every surviving <img> is left alone so it never reloads or flickers.
+    // ticker:start — slots of shared Telegram photos, overlaid on the bottom of the video, always
+    // full edge to edge: the current item set repeats k = ceil(barWidth / setWidth) times so it
+    // never falls short, and — since the row rotates — items beyond what fits at once still all
+    // come round instead of being clipped. Polls GET ticker every 1s (roughly matching the
+    // server's 5s TTL — see ticker.ts) but only rebuilds the track when the set of ids or k
+    // changes, so an unchanged ticker never restarts anything and surviving <img>s (same URL,
+    // repeats included) are served from the browser cache rather than refetched.
     const TICKER_POLL_MS = 1000;
-    const TICKER_LEAVE_MS = 200; // matches the CSS leave animation (ticker-item-out, above)
+    const TICKER_PX_PER_SEC = 40; // marquee speed, px/s — a calibration knob, tune to taste
+    const tickerReduceMotionQuery = matchMedia("(prefers-reduced-motion: reduce)");
     let lastTickerIds = null;
-    const tickerNodes = new Map(); // item id -> its <div class="ticker-item"> (incl. mid-leave)
+    let lastTickerItems = [];
+    let lastTickerK = 0;
+    let tickerSlotPitch = null; // px, cached: one slot's offsetWidth + the track's gap
+    let tickerAnimStart = null; // performance.now() the current marquee loop last began at phase 0
 
-    function buildTickerItem(item) {
+    function buildTickerItem(item, hiddenCopy) {
       const el = h("div", "ticker-item");
+      if (hiddenCopy) el.setAttribute("aria-hidden", "true"); // the duplicate pass, not read twice
       const img = document.createElement("img");
       img.className = "ticker-thumb";
       img.alt = "";
@@ -2340,48 +2350,104 @@
       return el;
     }
 
-    function updateTickerVisibility() {
-      const showing = tickerNodes.size > 0;
+    function updateTickerVisibility(showing) {
       document.body.classList.toggle("has-ticker", showing);
       tickerBar.hidden = !showing;
     }
 
-    // Diffs the new item list against what's in the DOM: appends brand-new ids, fades out and
-    // removes ids no longer present, leaves everything else untouched.
-    function renderTicker(items) {
-      const ids = new Set(items.map((item) => item.id));
-      for (const [id, el] of tickerNodes) {
-        if (ids.has(id) || el.classList.contains("leaving")) continue;
-        el.classList.add("leaving");
-        const finish = () => {
-          if (!tickerNodes.has(id)) return;
-          el.remove();
-          tickerNodes.delete(id);
-          updateTickerVisibility();
-        };
-        el.addEventListener("animationend", finish, { once: true });
-        // Belt-and-braces for prefers-reduced-motion, where the leave animation is `none` and
-        // animationend never fires.
-        setTimeout(finish, TICKER_LEAVE_MS);
-      }
-      for (const item of items) {
-        if (tickerNodes.has(item.id)) continue;
-        const el = buildTickerItem(item);
-        tickerTrack.appendChild(el);
-        tickerNodes.set(item.id, el);
-      }
-      updateTickerVisibility();
+    /** One slot's fixed footprint (width + the flex row's gap), read once from a real rendered
+     * slot rather than an off-DOM probe — the only thing that changes it is the desktop/phone CSS
+     * breakpoint, which a resize re-measures via refreshTickerLayout. */
+    function measureTickerSlotPitch() {
+      const sample = tickerTrack.querySelector(".ticker-item");
+      if (!sample) return null;
+      const gap = parseFloat(getComputedStyle(tickerTrack).gap) || 0;
+      return sample.offsetWidth + gap;
     }
+
+    function tickerBarContentWidth() {
+      const style = getComputedStyle(tickerBar);
+      return tickerBar.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    }
+
+    /** Full rebuild: only called when the id set or k changes (see fetchTicker/refreshTickerLayout
+     * below), never on every poll. Keeps the marquee's scroll phase continuous across a rebuild
+     * instead of snapping back to 0 — tickerAnimStart is only reset when the bar goes from empty
+     * to showing; otherwise the new animation starts at (elapsed so far) mod (new duration), via a
+     * negative animation-delay. */
+    function rebuildTickerTrack(items) {
+      const wasShowing = !tickerBar.hidden;
+      tickerTrack.textContent = "";
+      tickerTrack.style.animation = "none";
+      if (items.length === 0) {
+        updateTickerVisibility(false);
+        lastTickerK = 0;
+        tickerAnimStart = null;
+        return;
+      }
+      updateTickerVisibility(true);
+
+      if (tickerReduceMotionQuery.matches) {
+        // No scrolling: one static pass, left-aligned, clipped by #ticker-bar's overflow:hidden.
+        for (const item of items) tickerTrack.appendChild(buildTickerItem(item, false));
+        lastTickerK = 1;
+        return;
+      }
+
+      // Render one plain pass first, purely to measure the real slot pitch — then compute k and
+      // the final track arithmetically from it.
+      for (const item of items) tickerTrack.appendChild(buildTickerItem(item, false));
+      tickerSlotPitch = measureTickerSlotPitch() ?? tickerSlotPitch;
+      const barWidth = tickerBarContentWidth();
+      const setWidth = tickerSlotPitch ? items.length * tickerSlotPitch : barWidth || 1;
+      const k = tickerSlotPitch ? Math.max(1, Math.ceil(barWidth / setWidth)) : 1;
+      lastTickerK = k;
+
+      tickerTrack.textContent = "";
+      const repeated = Array.from({ length: k }, () => items).flat();
+      for (const item of repeated) tickerTrack.appendChild(buildTickerItem(item, false));
+      for (const item of repeated) tickerTrack.appendChild(buildTickerItem(item, true));
+
+      const passWidth = repeated.length * tickerSlotPitch;
+      const duration = Math.max(passWidth / TICKER_PX_PER_SEC, 1);
+      if (!wasShowing) tickerAnimStart = null;
+      if (tickerAnimStart === null) tickerAnimStart = performance.now();
+      const elapsed = ((performance.now() - tickerAnimStart) / 1000) % duration;
+      tickerTrack.style.animation = `ticker-scroll ${duration}s linear infinite`;
+      tickerTrack.style.animationDelay = `-${elapsed}s`;
+    }
+
+    /** True when the currently-rendered k no longer matches what the current bar width/item count
+     * need — used by resize/pure-TV toggles to decide whether a rebuild is warranted at all. */
+    function tickerLayoutStale(items) {
+      if (tickerReduceMotionQuery.matches) return false;
+      if (!tickerSlotPitch) return true;
+      const barWidth = tickerBarContentWidth();
+      const setWidth = items.length * tickerSlotPitch;
+      return Math.max(1, Math.ceil(barWidth / setWidth)) !== lastTickerK;
+    }
+
+    // Recomputes k on window resize and on the pure-TV chrome toggle (see setChromeHidden) —
+    // skipped while the bar is hidden or zero-width, and a no-op unless k actually changed.
+    function refreshTickerLayout() {
+      if (!lastTickerItems.length || tickerBar.hidden || !tickerBar.clientWidth) return;
+      if (tickerLayoutStale(lastTickerItems)) rebuildTickerTrack(lastTickerItems);
+    }
+    window.addEventListener("resize", refreshTickerLayout);
+    tickerReduceMotionQuery.addEventListener("change", () => {
+      if (lastTickerItems.length) rebuildTickerTrack(lastTickerItems);
+    });
 
     async function fetchTicker() {
       try {
         const res = await fetch("ticker");
         if (!res.ok) return;
         const { items } = await res.json();
+        lastTickerItems = items;
         const ids = items.map((item) => item.id).join(",");
         if (ids === lastTickerIds) return;
         lastTickerIds = ids;
-        renderTicker(items);
+        rebuildTickerTrack(items);
       } catch { /* transient network hiccup, next tick retries */ }
     }
     let tickerTimer = null;
