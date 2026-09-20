@@ -17,7 +17,7 @@ import { spend } from "./spend";
 // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
 import { log } from "./log";
 
-export const PITCH_COOLDOWN_MS = 30_000;
+export const PITCH_COOLDOWN_MS = 10_000;
 
 /** How long a pitch waits for the broadcaster to collect and play it before it is dropped. */
 export const PITCH_SLOT_TIMEOUT_MS = 60_000;
@@ -83,7 +83,7 @@ export class PitchSlot {
     this.sweep();
     const cooldown = this.cooldownSeconds(input.uid);
     if (cooldown > 0) {
-      const reason = `One ad every 30 seconds: ${cooldown}s left.`;
+      const reason = `One ad every 10 seconds: ${cooldown}s left.`;
       return { ok: false, code: "cooldown", reason };
     }
     if (this.current && this.current.state !== "dropped") {
