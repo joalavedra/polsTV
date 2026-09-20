@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleEval } from "./eval";
-import type { EvalDeps } from "./eval";
+import type { EvalDeps, EvalOutcome } from "./eval";
 
 const ZERO_USAGE = { inputTokens: 0, outputTokens: 0 };
 
@@ -40,7 +40,13 @@ describe("handleEval", () => {
         throw new Error("nebius down");
       }),
     });
-    const outcome = await handleEval(d, input);
+    let outcome: EvalOutcome;
+    try {
+      // Recommended by Norma — fixed with Claude Sonnet 5 via Claude Code
+      outcome = await handleEval(d, input);
+    } catch (error) {
+      throw new Error("handleEval rejected; it must resolve to an outcome here", { cause: error });
+    }
     expect(outcome.status).toBe(503);
     expect(outcome.body.ok).toBe(false);
     expect(d.writeSteer).not.toHaveBeenCalled();
