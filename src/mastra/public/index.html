@@ -50,9 +50,15 @@
        --inputbar-h until the observer's first measurement lands. Mobile ignores this var and
        keeps --inputbar-h, since its amend-toggle is absolutely positioned out of flow. */
     --say-form-h: var(--inputbar-h);
-    /* ticker:start — layout contract: 0 by default, set on body.has-ticker below. Includes the
-       bottom safe-area inset, so anything clearing the bar just needs bottom: var(--ticker-h). */
+    /* ticker:start — layout contract for the photo-slot banner, a fixed OVERLAY that never
+       resizes the video or pushes the input bar/panel. --ticker-h is the banner's own height
+       while it is showing, 0px otherwise (set on body.has-ticker below). --ticker-bottom is the
+       gap between the viewport bottom and the banner's bottom edge — 0px on desktop (the banner
+       sits flush with the video's bottom edge), the input bar's height plus safe-area on
+       mobile/landscape-phone (the banner sits directly above the pinned input bar). The AD
+       banner stacks on top of this one at bottom: calc(var(--ticker-bottom, 0px) + var(--ticker-h, 0px)). */
     --ticker-h: 0px;
+    --ticker-bottom: 0px;
     /* ticker:end */
   }
   * { box-sizing: border-box; }
@@ -460,8 +466,10 @@
     position: fixed;
     left: 0;
     right: 0;
-    /* ticker: cleared above the crawl bar too — --ticker-h is 0 when it's not showing. */
-    bottom: calc(var(--inputbar-h) + var(--ticker-h));
+    /* ticker: the banner overlays the picture above the input bar now, it never pushes this sheet
+       — clearing --inputbar-h alone (not --ticker-h) keeps the sheet fixed to the bar's real
+       edge whether or not a photo is showing. */
+    bottom: var(--inputbar-h);
     height: 70dvh;
     z-index: 12;
     background: var(--panel-bg);
@@ -474,7 +482,7 @@
     overflow: hidden;
     /* The sheet is anchored above the input bar, so 100% alone left its tab row peeking out from
        behind the translucent bar. Push it the bar's height further. */
-    transform: translateY(calc(100% + var(--inputbar-h) + var(--ticker-h)));
+    transform: translateY(calc(100% + var(--inputbar-h)));
     transition: transform .25s ease;
   }
   body.sheet-open #panel { transform: translateY(0); }
@@ -524,7 +532,9 @@
     position: fixed;
     left: 0;
     right: 0;
-    bottom: var(--ticker-h); /* ticker: clears the crawl bar when it's showing */
+    /* ticker: stops above the banner (itself overlaid above the input bar on mobile) so the
+       banner stays visible below the sheet, same anchor the AD banner stacks on. */
+    bottom: calc(var(--ticker-bottom, 0px) + var(--ticker-h, 0px));
     z-index: 15;
     background: #111;
     border: 1px solid var(--panel-border);
@@ -630,7 +640,9 @@
     #panel {
       right: 0;
       left: auto;
-      bottom: var(--ticker-h); /* ticker: clears the crawl bar when it's showing */
+      /* ticker: the bar itself is part of .chrome and hidden in landscape (see above) — the
+         drawer always runs the full height, nothing to clear. */
+      bottom: 0;
       top: 0;
       height: auto;
       width: min(86vw, 340px);
@@ -707,12 +719,13 @@
     .you-chip { display: none; }
   }
 
-  /* Pinned input bar: fixed at every breakpoint, only its left/right/width differ below. */
+  /* Pinned input bar: fixed at every breakpoint, only its left/right/width differ below. Always
+     bottom: 0 — the ticker banner overlays above it now, it never pushes this bar. */
   #say-form {
     position: fixed;
     left: 0;
     right: 0;
-    bottom: var(--ticker-h); /* ticker: clears the crawl bar when it's showing */
+    bottom: 0;
     z-index: 13;
     display: flex;
     flex-wrap: wrap;
@@ -975,16 +988,26 @@
     }
   }
 
-  /* ticker:start — bottom crawl of shared Telegram photos, outside the video (the broadcast
-     picture itself no longer draws it). Self-contained, safe to drop in a conflict. Sets
-     body.has-ticker + --ticker-h (declared on :root above) as the layout contract other
-     bottom-anchored chrome reads to clear it. Loud 90s-music-television palette on purpose: the
-     bar's own background is a STATIC gradient (only #ticker-track's transform ever animates), so
-     text contrast never shifts as items scroll past. Custom properties are scoped to #ticker-bar
-     itself, keeping the palette part of this self-contained block too. */
-  body.has-ticker { --ticker-h: calc(56px + env(safe-area-inset-bottom, 0px)); }
+  /* ticker:start — SLOTS of shared Telegram photos, overlaid on the bottom of the video (never
+     pushes or resizes it — see the desktop/mobile/landscape blocks that clear --ticker-bottom
+     instead). Self-contained, safe to drop in a conflict. Sets body.has-ticker + --ticker-h
+     (declared on :root above) as the layout contract other bottom-anchored chrome reads to clear
+     it. Loud 90s-music-television palette on purpose: the bar's own background is a STATIC
+     gradient, nothing here ever animates except one item's own enter/exit. Custom properties are
+     scoped to #ticker-bar itself, keeping the palette part of this self-contained block too. */
+  body.has-ticker { --ticker-h: calc(108px + env(safe-area-inset-bottom, 0px)); }
   @media (max-width: 820px) {
-    body.has-ticker { --ticker-h: calc(44px + env(safe-area-inset-bottom, 0px)); }
+    body.has-ticker { --ticker-h: calc(76px + env(safe-area-inset-bottom, 0px)); }
+  }
+  /* --ticker-bottom reflects the breakpoint regardless of whether the banner is showing (the AD
+     banner above it needs a stable answer even while ours is empty): 0 on desktop, where the
+     banner sits flush with the video's bottom edge; the pinned input bar's height + safe-area on
+     mobile/landscape-phone, where the banner sits above the bar instead of pushing it. */
+  @media (max-width: 820px) {
+    :root { --ticker-bottom: calc(var(--inputbar-h) + env(safe-area-inset-bottom, 0px)); }
+  }
+  @media (max-height: 500px) and (orientation: landscape) {
+    :root { --ticker-bottom: calc(var(--inputbar-h) + env(safe-area-inset-bottom, 0px)); }
   }
   #ticker-bar {
     --tk-pink: #ff2ec4;
@@ -994,50 +1017,48 @@
     position: fixed;
     left: 0;
     right: 0;
-    bottom: 0;
+    bottom: var(--ticker-bottom, 0px);
     z-index: 17;
     height: var(--ticker-h);
     /* Content height = --ticker-h minus the safe-area padding below, via border-box. */
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding: 6px 12px calc(6px + env(safe-area-inset-bottom, 0px));
     overflow: hidden;
     background: linear-gradient(90deg, #170826 0%, #240f3d 50%, #170826 100%);
     border-top: 4px solid var(--tk-pink);
   }
+  @media (max-width: 820px) {
+    #ticker-bar { padding: 4px 8px calc(4px + env(safe-area-inset-bottom, 0px)); border-top-width: 3px; }
+  }
+  /* Slots, not a crawl: arrival order left-to-right, items append to the right and closing gaps
+     when one expires (a plain flex row does both for free). Never scrolls or repeats copies; if
+     more arrive than fit the row just clips (overflow: hidden on the bar above). */
   #ticker-track {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
+    gap: .6rem;
     height: 100%;
-    width: max-content;
-    animation: ticker-scroll linear infinite;
-  }
-  @keyframes ticker-scroll {
-    from { transform: translateX(0); }
-    to { transform: translateX(-50%); }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    /* Stays at translateX(0): overflow:hidden on #ticker-bar crops it to the first items,
-       shown statically instead of scrolling. */
-    #ticker-track { animation: none; }
   }
   .ticker-item {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: .5rem;
-    padding: 0 1.1rem;
     flex: none;
-    white-space: nowrap;
-    color: #fff;
-    font-size: .82rem;
+    width: 88px;
+    animation: ticker-item-in .2s ease-out;
   }
-  /* Separator glyph between items, in place of relying on gaps alone to break up the crawl. */
-  .ticker-item::after {
-    content: "\2726";
-    margin-left: 1.1rem;
-    color: var(--tk-yellow);
+  .ticker-item.leaving { animation: ticker-item-out .2s ease-in forwards; }
+  @keyframes ticker-item-in {
+    from { opacity: 0; transform: translateY(6px) scale(.92); }
+  }
+  @keyframes ticker-item-out {
+    to { opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ticker-item, .ticker-item.leaving { animation: none; }
   }
   .ticker-thumb {
-    width: 36px;
-    height: 36px;
+    width: 88px;
+    height: 72px;
     border-radius: 6px;
     object-fit: cover;
     flex: none;
@@ -1049,19 +1070,28 @@
   .ticker-item:nth-child(4n+2) .ticker-thumb { border-color: var(--tk-yellow); }
   .ticker-item:nth-child(4n+3) .ticker-thumb { border-color: var(--tk-cyan); }
   .ticker-item:nth-child(4n+4) .ticker-thumb { border-color: var(--tk-purple); }
+  /* Name (+ caption, same line) lives BELOW the image now — more room went to the picture, which
+     is the point. One line, ellipsised: a caption that doesn't fit is clipped away with it. */
+  .ticker-label {
+    margin-top: .25rem;
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: .68rem;
+  }
   .ticker-name {
     font-family: var(--display-font);
-    font-size: .8em;
     font-weight: 400;
     letter-spacing: .02em;
     color: var(--tk-yellow);
     text-shadow: 1px 1px 0 #000;
   }
-  .ticker-caption { font-weight: 400; color: #fff; opacity: .88; }
+  .ticker-caption { font-weight: 400; color: #fff; opacity: .88; margin-left: .35em; }
   @media (max-width: 820px) {
-    .ticker-item { font-size: .76rem; padding: 0 .8rem; gap: .4rem; }
-    .ticker-item::after { margin-left: .8rem; }
-    .ticker-thumb { width: 28px; height: 28px; border-radius: 5px; }
+    .ticker-item { width: 60px; }
+    .ticker-thumb { width: 60px; height: 48px; border-radius: 5px; border-width: 2px; }
+    .ticker-label { font-size: .6rem; }
   }
   /* ticker:end */
 
@@ -1258,7 +1288,9 @@
       top: 0;
       left: 0;
       right: var(--side-col-w);
-      bottom: var(--ticker-h, 0px);
+      /* Always 0: the ticker banner overlays the bottom of the picture now, it never resizes
+         the video (a photo arriving/expiring every few seconds must never jump the picture). */
+      bottom: 0;
     }
     #video-wrap { position: absolute; inset: 0; }
     /* Vonage's subscriber is created with fitMode:"contain" for every breakpoint (see the JS);
@@ -1267,6 +1299,12 @@
     #subscriber-container video, #subscriber-container object { object-fit: cover !important; }
     #offair-card { border-radius: 12px; }
     #stage-caption { padding-right: calc(24px + var(--rail-btn) + 16px); }
+    /* ticker: the banner overlays the caption's own corner too (#video-stage no longer clears
+       it) — shift the caption up by the banner's height while it's showing. */
+    body.has-ticker #stage-caption { bottom: var(--ticker-h); transition: bottom .2s ease; }
+    @media (prefers-reduced-motion: reduce) {
+      body.has-ticker #stage-caption { transition: none; }
+    }
 
     /* Top gradient so the top bar's pills stay legible over any picture underneath them. */
     #video-stage::before {
@@ -1281,11 +1319,9 @@
       z-index: 2;
     }
 
-    /* Pure TV: nothing but the picture. The side column goes (right: 0) and the ticker is fully
-       hidden by the shared .chrome rule above, but --ticker-h is a body-level variable that
-       doesn't know that — left alone, #video-stage would still clear a dead strip the height of
-       a ticker nobody can see. Force bottom: 0 too. */
-    body.chrome-hidden #video-stage { right: 0; bottom: 0; }
+    /* Pure TV: nothing but the picture — the side column goes (right: 0). #video-stage's
+       bottom is already 0 unconditionally above, so there's nothing left to clear here. */
+    body.chrome-hidden #video-stage { right: 0; }
 
     /* ticker: spans exactly the video area, not underneath the side column (it also hides
        entirely in pure TV via the shared .chrome rule — this just keeps its geometry correct
@@ -1321,9 +1357,14 @@
       right: calc(var(--side-col-w) + 24px);
       top: calc(var(--topbar-h) + 16px);
       bottom: calc(var(--ticker-h, 0px) + 16px);
+      /* ticker: a photo arriving/expiring shifts this band's floor — smooth it instead of a snap. */
+      transition: bottom .2s ease;
       transform: none;
       justify-content: center;
       gap: 20px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #action-rail { transition: none; }
     }
     /* Subtle dark scrim behind the icon column so white icons read over any picture. */
     #action-rail::before {
@@ -1759,9 +1800,10 @@
 
   <div id="toast-region" aria-live="polite"></div>
 
-  <!-- ticker:start — bottom crawl of shared Telegram photos, outside the video. class="chrome"
-       hides it with the rest of the chrome in pure-TV mode and in landscape-phone mode.
-       Items are built by JS (ticker:start/end further down); empty means hidden, no space. -->
+  <!-- ticker:start — slots of shared Telegram photos, overlaid on the bottom of the video.
+       class="chrome" hides it with the rest of the chrome in pure-TV mode and in
+       landscape-phone mode. Items are built by JS (ticker:start/end further down); empty means
+       hidden, no space. -->
   <div id="ticker-bar" class="chrome" hidden aria-hidden="true">
     <div id="ticker-track"></div>
   </div>
@@ -1987,7 +2029,6 @@
       interfaceBtn.setAttribute("aria-pressed", String(hidden));
       moreInterfaceBtn.setAttribute("aria-pressed", String(hidden));
       if (hidden) closeSpendPopover({ returnFocus: false });
-      recomputeTickerLayout(); // ticker: the side column appearing/disappearing changes its width
     }
     interfaceBtn.addEventListener("click", () => setChromeHidden(!isChromeHidden()));
     moreInterfaceBtn.addEventListener("click", () => {
@@ -2234,14 +2275,15 @@
       closeSpendPopover({ returnFocus: false });
     });
 
-    // ticker:start — bottom crawl of shared Telegram photos. Polls GET ticker every 5s but only
-    // rebuilds the DOM when the set of item ids, or the number of copies needed to fill the bar,
-    // actually changes, so nothing ever restarts the CSS scroll animation for no reason.
-    const TICKER_POLL_MS = 5000;
-    const TICKER_PX_PER_SEC = 60;
+    // ticker:start — slots of shared Telegram photos, overlaid on the bottom of the video. Polls
+    // GET ticker every 1s (roughly matching the server's 5s TTL — see ticker.ts) but only ever
+    // touches the DOM for ids that actually changed: a new id is appended to the right (arrival
+    // order, the same order the server returns them in), a gone id fades out and is removed, and
+    // every surviving <img> is left alone so it never reloads or flickers.
+    const TICKER_POLL_MS = 1000;
+    const TICKER_LEAVE_MS = 200; // matches the CSS leave animation (ticker-item-out, above)
     let lastTickerIds = null;
-    let lastTickerItems = [];
-    let lastTickerRepeats = null;
+    const tickerNodes = new Map(); // item id -> its <div class="ticker-item"> (incl. mid-leave)
 
     function buildTickerItem(item) {
       const el = h("div", "ticker-item");
@@ -2249,63 +2291,45 @@
       img.className = "ticker-thumb";
       img.alt = "";
       img.src = item.url; // page-relative: resolves under a path prefix (site.com/polstv/) too
-      el.append(img, h("span", "ticker-name", item.name));
-      if (item.caption) el.appendChild(h("span", "ticker-caption", item.caption));
+      const label = h("span", "ticker-label");
+      label.appendChild(h("span", "ticker-name", item.name));
+      if (item.caption) label.appendChild(h("span", "ticker-caption", item.caption));
+      el.append(img, label);
       return el;
     }
 
-    // A single pass of 1-3 items is often narrower than the bar (the video's whole width on
-    // desktop), which used to leave a blank stretch before the -50% loop repeated. Repeating the
-    // item set until one pass is at least as wide as the bar, then doubling that for the seamless
-    // loop, keeps the crawl full edge-to-edge whatever the item count.
-    function repeatsNeeded(items) {
-      const probe = document.createElement("div");
-      probe.style.cssText = "position:absolute;visibility:hidden;left:-9999px;top:-9999px;display:flex;width:max-content;";
-      for (const item of items) probe.appendChild(buildTickerItem(item));
-      document.body.appendChild(probe);
-      const passWidth = probe.scrollWidth || 1;
-      probe.remove();
-      const barWidth = tickerBar.getBoundingClientRect().width || window.innerWidth;
-      return Math.max(1, Math.ceil(barWidth / passWidth));
+    function updateTickerVisibility() {
+      const showing = tickerNodes.size > 0;
+      document.body.classList.toggle("has-ticker", showing);
+      tickerBar.hidden = !showing;
     }
 
-    // Rebuilds the track only when the repeat count actually needs to change, so a resize that
-    // doesn't cross a threshold — or an unrelated status poll — never restarts the animation.
-    function layoutTicker(items) {
-      const repeats = repeatsNeeded(items);
-      if (repeats === lastTickerRepeats) return;
-      lastTickerRepeats = repeats;
-      tickerTrack.textContent = "";
-      for (let copy = 0; copy < repeats * 2; copy += 1) {
-        for (const item of items) tickerTrack.appendChild(buildTickerItem(item));
-      }
-      const oneCopyWidth = tickerTrack.scrollWidth / 2;
-      tickerTrack.style.animationDuration = `${Math.max(oneCopyWidth / TICKER_PX_PER_SEC, 1)}s`;
-    }
-
+    // Diffs the new item list against what's in the DOM: appends brand-new ids, fades out and
+    // removes ids no longer present, leaves everything else untouched.
     function renderTicker(items) {
-      lastTickerItems = items;
-      document.body.classList.toggle("has-ticker", items.length > 0);
-      tickerBar.hidden = items.length === 0;
-      if (items.length === 0) {
-        tickerTrack.textContent = "";
-        lastTickerRepeats = null;
-        return;
+      const ids = new Set(items.map((item) => item.id));
+      for (const [id, el] of tickerNodes) {
+        if (ids.has(id) || el.classList.contains("leaving")) continue;
+        el.classList.add("leaving");
+        const finish = () => {
+          if (!tickerNodes.has(id)) return;
+          el.remove();
+          tickerNodes.delete(id);
+          updateTickerVisibility();
+        };
+        el.addEventListener("animationend", finish, { once: true });
+        // Belt-and-braces for prefers-reduced-motion, where the leave animation is `none` and
+        // animationend never fires.
+        setTimeout(finish, TICKER_LEAVE_MS);
       }
-      layoutTicker(items);
+      for (const item of items) {
+        if (tickerNodes.has(item.id)) continue;
+        const el = buildTickerItem(item);
+        tickerTrack.appendChild(el);
+        tickerNodes.set(item.id, el);
+      }
+      updateTickerVisibility();
     }
-
-    // Recomputes the repeat count when the bar's own width changes — a window resize, or pure-TV
-    // toggling the side column away — without waiting for the next poll. layoutTicker's own guard
-    // means this only touches the DOM when the new width actually needs a different copy count.
-    // Skipped while the bar itself is hidden (no items, or pure TV's blanket .chrome hide) — its
-    // width would measure 0 and force a spurious rebuild; the next time it's shown, this same
-    // function runs again (setChromeHidden calls it either direction) and measures for real.
-    function recomputeTickerLayout() {
-      if (tickerBar.hidden || !tickerBar.getBoundingClientRect().width) return;
-      layoutTicker(lastTickerItems);
-    }
-    window.addEventListener("resize", recomputeTickerLayout);
 
     async function fetchTicker() {
       try {

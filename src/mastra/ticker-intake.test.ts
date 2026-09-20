@@ -153,7 +153,7 @@ describe("handlePhotoSubmission", () => {
   it("refuses on cooldown before touching the network, and reports seconds left", async () => {
     const d = deps({ cooldownSeconds: vi.fn(() => 42) });
     const result = await handlePhotoSubmission(d, input());
-    expect(result).toEqual({ accepted: false, reply: "One photo per minute on the ticker: 42s left." });
+    expect(result).toEqual({ accepted: false, reply: "One photo every 15s on the ticker: 42s left." });
     expect(d.downloadPhoto).not.toHaveBeenCalled();
     expect(d.moderateImage).not.toHaveBeenCalled();
     expect(d.addItem).not.toHaveBeenCalled();
