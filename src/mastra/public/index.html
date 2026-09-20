@@ -1625,7 +1625,7 @@
     <div class="top-right chrome">
       <div class="pill" id="viewer-pill"><span id="viewer-count">0 watching</span></div>
       <!-- pitch:start -->
-      <button type="button" class="pill pill-btn" id="pitch-btn">pitch</button>
+      <button type="button" class="pill pill-btn" id="pitch-btn">make an ad</button>
       <!-- pitch:end -->
       <button type="button" class="pill pill-btn" id="mute-btn" aria-pressed="false">mute</button>
       <button type="button" class="pill pill-btn" id="interface-btn" aria-pressed="false">interface</button>
@@ -1758,14 +1758,14 @@
   <div id="pitch-modal" hidden>
     <form class="modal" id="pitch-form" role="dialog" aria-modal="true"
       aria-labelledby="pitch-modal-title">
-      <h2 id="pitch-modal-title" style="margin:0;">A word from you</h2>
-      <p id="pitch-hint">The channel's voice reads a short advert over whatever is on air.</p>
+      <h2 id="pitch-modal-title" style="margin:0;">Make an ad</h2>
+      <p id="pitch-hint">The channel's voice reads it on air. You can name an event or a place.</p>
       <label for="pitch-input">What should it sell?</label>
       <input id="pitch-input" type="text" minlength="1" maxlength="140" required autocomplete="off"
-        placeholder="sell my lemonade stand, aggressively">
+        placeholder="the flea market in Gràcia this Sunday">
       <div class="modal-actions">
         <button type="button" id="pitch-cancel">Cancel</button>
-        <button type="submit" id="pitch-submit">Send</button>
+        <button type="submit" id="pitch-submit">Air it</button>
       </div>
     </form>
   </div>
@@ -1782,7 +1782,7 @@
       </button>
       <!-- pitch:start -->
       <button type="button" class="sheet-row" id="more-pitch-btn">
-        <span>Pitch</span><span class="sheet-row-value" id="more-pitch-state">ready</span>
+        <span>Make an ad</span><span class="sheet-row-value" id="more-pitch-state">ready</span>
       </button>
       <!-- pitch:end -->
       <button type="button" class="sheet-row" id="more-spend-btn" aria-haspopup="dialog"
@@ -2656,7 +2656,7 @@
       pitchSubmit.textContent = "writing…";
       const { status, data } = await postJSONSafe("pitch", { uid, name: getName(), brief });
       pitchSubmit.disabled = false;
-      pitchSubmit.textContent = "Send";
+      pitchSubmit.textContent = "Air it";
       if (status === 200 && data && data.line) {
         pitchModal.hidden = true;
         pitchInput.value = "";
