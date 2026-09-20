@@ -3,8 +3,6 @@
  * clock injected — same style as `PitchSlot` (pitch.ts) and `Ticker` (ticker.ts).
  */
 
-export const AD_BANNER_MS = 10_000;
-
 export interface AdBanner {
   line: string;
   endsAt: number;
@@ -15,12 +13,16 @@ export class AdBannerSlot {
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  /** A clip just started playing: show its line for AD_BANNER_MS, replacing any banner already up. */
-  start(line: string): void {
-    this.banner = { line, endsAt: this.now() + AD_BANNER_MS };
+  /**
+   * A clip just started playing: show its line until the clip ends, replacing any banner already
+   * up. `ms` is the clip's real duration; half a second of grace is added so the slate never
+   * vanishes before the last word.
+   */
+  start(line: string, ms: number): void {
+    this.banner = { line, endsAt: this.now() + ms + 500 };
   }
 
-  /** The banner while it's live; null once AD_BANNER_MS has passed since start(). */
+  /** The banner while it's live; null once its clip (plus grace) has finished. */
   current(): AdBanner | null {
     if (!this.banner || this.now() >= this.banner.endsAt) return null;
     return this.banner;
