@@ -69,11 +69,13 @@ code, since the clip has to finish before the next steer arrives.
 The same voice also reads the pitch, open to any viewer: they send a brief of up to 140 characters
 ("sell my lemonade stand, aggressively") and the channel reads the same kind of ad for it over
 whatever is on air, opening "A word from Timba." The brief and the nickname go through their own
-moderation rubric first: a real company, brand, product, shop, app or service is fine to name (a
-sponsor, the viewer's own startup), and so is a price, discount or offer — real people, health/
-financial/legal/safety claims, age-restricted or illegal goods, scams, and contact details are
-still refused. The written read is capped at 20 words with anything URL-like stripped out. One
-pitch is on air or pending at a time, one per viewer every 30 seconds, and a pitch nobody collects
+moderation rubric first: almost anything goes, played for a joke — a real company, brand, product,
+shop, app or service (a sponsor, the viewer's own startup), a price, discount or offer, and a real
+person named playfully are all fine, as are obviously-a-joke health/money/legal claims. Sexual or
+hateful content, a scam aimed at the listener, illegal goods, self-harm, someone's private contact
+details, and prompt-injection attempts are still refused. The written read is capped at 20 words
+with anything URL-like stripped out. One pitch is on air or pending at a time, one per viewer every
+10 seconds, and a pitch nobody collects
 within 60 seconds is dropped and the viewer told. The broadcaster plays spoken clips strictly one
 after another, so a pitch never talks over a steer's ad read.
 
