@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clip, synthesise } from "./announcer";
+import { clip, clipLine, synthesise } from "./announcer";
 
 describe("synthesise", () => {
   afterEach(() => {
@@ -62,5 +62,20 @@ describe("synthesise", () => {
     for (let index = 0; index < 10; index += 1) await synthesise(`keep-${index}`, "hello");
     expect(clip("keep-0")).toBeUndefined();
     expect(clip("keep-9")).toBeDefined();
+  });
+
+  it("keeps the clean line, without the TTS tone marker, for clipLine()", async () => {
+    vi.stubEnv("SLNG_API_KEY", "test-key");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array([1]), { status: 200 })));
+    await synthesise("clip-e", "A word from Ana. Hello.");
+    expect(clipLine("clip-e")).toBe("A word from Ana. Hello.");
+  });
+
+  it("drops a clip's line together with its audio once evicted", async () => {
+    vi.stubEnv("SLNG_API_KEY", "test-key");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array([9]), { status: 200 })));
+    for (let index = 0; index < 10; index += 1) await synthesise(`evict-${index}`, `line ${index}`);
+    expect(clipLine("evict-0")).toBeUndefined();
+    expect(clipLine("evict-9")).toBe("line 9");
   });
 });

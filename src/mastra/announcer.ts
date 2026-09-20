@@ -20,7 +20,14 @@ const CLIPS_KEPT = 8;
 // a `tone` param if a non-ad caller shows up.
 const TTS_TONE_MARKER = "[excited]";
 
-const clips = new Map<string, Buffer>();
+// The clean line ships alongside the audio so the AD banner (ad-banner.ts) can show the same words
+// the voice is reading, without re-deriving them from the TTS-marked text sent to SLNG.
+interface Clip {
+  audio: Buffer;
+  line: string;
+}
+
+const clips = new Map<string, Clip>();
 
 /** Synthesise a line and keep it for pickup. Returns the clip id. Throws on any SLNG failure. */
 export async function synthesise(clipId: string, line: string): Promise<string> {
@@ -56,11 +63,16 @@ export async function synthesise(clipId: string, line: string): Promise<string> 
   log.info(
     `slng_tts ms=${Math.round(performance.now() - startedAt)} bytes=${audio.length} chars=${spoken.length}`,
   );
-  clips.set(clipId, audio);
+  clips.set(clipId, { audio, line });
   for (const oldest of [...clips.keys()].slice(0, -CLIPS_KEPT)) clips.delete(oldest);
   return clipId;
 }
 
 export function clip(clipId: string): Buffer | undefined {
-  return clips.get(clipId);
+  return clips.get(clipId)?.audio;
+}
+
+/** The clean line synthesise() was given for this clip, for the on-screen AD banner. */
+export function clipLine(clipId: string): string | undefined {
+  return clips.get(clipId)?.line;
 }
