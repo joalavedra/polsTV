@@ -21,7 +21,7 @@ Studio is at `/studio`. Custom routes cannot live under `/api` (Mastra reserves 
 | `GET /spend` | — | `SpendSnapshot` (below), the spend pill's data. Not under `/status`: that route is polled every second by every viewer, spend only needs a few-second cadence. |
 | `GET /ticker` | — | `{ items: [{ id, name, caption, url }] }`, the images currently on the ticker (newest last). `url` is page-relative (`ticker/<id>`, no leading slash — the app is served under `/polstv/` in production). |
 | `GET /ticker/:id` | — | The image bytes, with the right `content-type` and `cache-control: public, max-age=600`. `404` once the item is unknown or has expired. |
-| `GET /recs` | — | `{ sceneId, moodLine, picks: CatalogItem[] }` for the scene currently on air. `picks` is empty (and `sceneId` may be `null`) when nothing is on air or nothing verified against the catalog. `CatalogItem`: `{ id, mediaType: "movie"｜"tv", title, year?, overview, rating?, posterUrl, backdropUrl?, url }` (see `src/mastra/catalog.ts`). Never blocks or delays a steer — see "Scene → recs" below. |
+| `GET /recs` | — | `{ sceneId, moodLine, picks: CatalogItem[] }` for the scene currently on air. Polling this is what builds them; `picks` is empty (and `sceneId` may be `null`) when nothing is on air, while the first build for a scene is still running, or when nothing verified against the catalog. `CatalogItem`: `{ id, mediaType: "movie"｜"tv", title, year?, overview, rating?, posterUrl, backdropUrl?, url }` (see `src/mastra/catalog.ts`); `posterUrl`/`backdropUrl` are always https on `static.tvmaze.com` or `upload.wikimedia.org`. Never blocks or delays a steer — see "Scene → recs" below. |
 | `POST /tv/ask` | `multipart/form-data`: `uid`, optional `audio` (blob, same limits as `/say-voice`), optional `text`, optional `about` (JSON string `{id, mediaType}`, a card the viewer is looking at) | `200 { heard, say, audioUrl?, picks: CatalogItem[], askedFollowUp, queued? }` · `422 {ok:false,reason,heard}` nothing heard · `400` invalid (neither audio nor text given, or bad fields) · `415` bad audio type/size · `429` rate limit · `503` transcription or the concierge failed. `picks` is always a subset of what a tool call actually returned this turn — the concierge never invents a title. `queued` is present only when the reply set `vibe` (see below). |
 
 `uid`: 8–64 chars of `[A-Za-z0-9_-]`, random, generated client-side, kept in `localStorage`.
@@ -75,11 +75,13 @@ drops out of this list but its cost stays folded into `byProvider`/`totalUsd` �
 
 ## Scene → recs, and the TV concierge (`tv.html`)
 
-When a NEW scene takes the air (never an amend — `recs.ts`'s `sceneRecsJob`), `src/mastra/recs.ts`
-asks Nebius to propose real movie/show titles for that scene's mood, verifies each one against the
-catalog (`src/mastra/catalog.ts`: TVmaze for series and live TV, Wikipedia for films — both keyless,
-no configuration needed), and keeps the best 3. This runs after `POST /b/:secret/steer-result`
-responds — it never blocks or delays a steer, and a failure here just means an empty `GET /recs`.
+`GET /recs` is the only thing that builds recommendations (`recs.ts`'s `RecsStore.ensure`). The
+first request for a scene asks Nebius to propose real movie/show titles for that scene's mood,
+verifies each one against the catalog (`src/mastra/catalog.ts`: TVmaze for series and live TV,
+Wikipedia for films — both keyless, no configuration needed), and keeps the best 3, answering empty
+in the meantime. A scene is built at most once, whatever the outcome and however many TVs poll; an
+amend keeps the scene's `ideaId`, so it reuses that scene's picks. Nothing here runs on the steer
+path, so it cannot block or delay a steer, and a failure just means an empty `GET /recs`.
 
 `POST /tv/ask` runs a `concierge` agent (same fast Nebius model as the rest of the channel, per-`uid`
 memory) with two tools: `lookupTitles` (verify candidate titles the model proposes) and `whatsOnNow`

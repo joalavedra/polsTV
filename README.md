@@ -140,10 +140,12 @@ older — and the ticker holds at most 12 items. Text messages to the bot are un
 
 `tv.html` is a 10-foot UI for the same channel: the live picture full-bleed, remote/keyboard
 navigation (arrow keys move focus, Enter/OK activates, Backspace/Escape goes back), and a
-bottom-left "You might also like…" rail. Whenever a new scene takes the air, `recs.ts` asks Nebius
-to propose real movie and show titles that match its mood, verifies each one against a keyless
-public catalog — TVmaze for series and live TV, Wikipedia for films (`catalog.ts`) — and keeps the
-best 3; `GET /recs` serves them for whichever scene is on air.
+bottom-left "You might also like…" rail. `GET /recs` fills the rail and is also what builds it: the
+first request for a scene asks Nebius to propose real movie and show titles that match its mood,
+verifies each one against a keyless public catalog — TVmaze for series and live TV, Wikipedia for
+films (`catalog.ts`) — and keeps the best 3. A scene lasts 10 seconds, so nothing is built for a
+channel nobody is watching on `tv.html`, and a scene is built once however many TVs are open. The
+first poll after a scene change answers with an empty rail; the next one has the picks.
 
 Hold OK on the Talk button (or hold Space anywhere) to ask the channel for something to watch, by
 voice — release to send, same SLNG transcription the viewer page's mic uses. A `concierge` agent
@@ -159,8 +161,8 @@ as an idea through the same moderated path as `/say`.
 | Sponsor | What it does here |
 |---|---|
 | **fal — H3 Max Director** | The channel's video: one continuous WebRTC session (`minimax/h3-max/director`), steered live with `prompt` / `prompt_version` messages sent from the broadcaster page — never a pre-rendered clip. |
-| **Nebius Token Factory** | Five jobs through Mastra's `nebius/<model>` router, all on `Qwen/Qwen3-30B-A3B-Instruct-2507`: moderating every idea and nickname, writing the steering prompt that transitions from the current scene, writing an amend's one-thing change, moderating a pitch brief against its own rubric, and writing the ad read shared by the pitch and by any steer whose idea asks for an ad. A sixth job, `nebius/openbmb/MiniCPM-V-4_5`, moderates every ticker photo before it is stored. |
-| **Mastra** | The backend framework: six agents (`moderator`, `sceneWriter`, `amendWriter`, `pitchModerator`, `pitchWriter`, `showrunner`), a Telegram channel via `@chat-adapter/telegram` in polling mode, per-user `Memory` (last 10 messages) on LibSQL storage, and the `registerApiRoute()` custom routes that serve the whole HTTP contract plus both static pages. A voice note to the bot is transcribed before it reaches the showrunner, so every tool works by voice too. |
+| **Nebius Token Factory** | Seven jobs through Mastra's `nebius/<model>` router, all on `Qwen/Qwen3-30B-A3B-Instruct-2507`: moderating every idea and nickname, writing the steering prompt that transitions from the current scene, writing an amend's one-thing change, moderating a pitch brief against its own rubric, writing the ad read shared by the pitch and by any steer whose idea asks for an ad, proposing candidate titles for the scene's "you might also like" rail, and running the TV concierge's conversation. An eighth job, `nebius/openbmb/MiniCPM-V-4_5`, moderates every ticker photo before it is stored. |
+| **Mastra** | The backend framework: eight agents (`moderator`, `sceneWriter`, `amendWriter`, `pitchModerator`, `pitchWriter`, `showrunner`, `recsWriter`, `concierge`), a Telegram channel via `@chat-adapter/telegram` in polling mode, per-user `Memory` (last 10 messages) on LibSQL storage, and the `registerApiRoute()` custom routes that serve the whole HTTP contract plus all three static pages. A voice note to the bot is transcribed before it reaches the showrunner, so every tool works by voice too. |
 | **Vonage Video API** | Fan-out: one routed session. The broadcaster publishes a canvas-plus-WebAudio `MediaStreamTrack` with `OT.initPublisher`; every viewer connects with a subscribe-only token from `GET /viewer-token`. |
 | **SLNG** | `slng/fish/tts:s2.1-pro` on `eu-west.api.slng.ai` synthesises the channel's voice — the ad read for a steer whose idea asks for an ad, and the sponsored ad read a viewer unlocks at 3 karma — mixed into the published audio one clip at a time, ducking Director's own audio while it plays. Voice notes to the bot are transcribed with SLNG, and so is every `tv.html` concierge turn, which SLNG then speaks back. |
 | **Titan OS** | `tv.html`: a 10-foot UI for the channel — remote/keyboard navigation, a "you might also like" rail driven by the scene on air (`recs.ts`), and a `concierge` agent (`concierge.ts`) you can talk to for movie/show picks and what's on live TV, by voice or by typing. Catalog data (TVmaze, Wikipedia) is keyless — see `catalog.ts`. |
