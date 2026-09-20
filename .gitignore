@@ -12,4 +12,5 @@ spike/server.log
 mastra.db*
 data/
 .claude/
+.scratch-verify/
 __pycache__/
