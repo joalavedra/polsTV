@@ -2418,12 +2418,15 @@
     }
 
     /** True when the currently-rendered k no longer matches what the current bar width/item count
-     * need — used by resize/pure-TV toggles to decide whether a rebuild is warranted at all. */
+     * need — used by resize/pure-TV toggles to decide whether a rebuild is warranted at all.
+     * Re-measures the slot pitch fresh rather than trusting the cache: a resize is exactly when
+     * the desktop/phone breakpoint (and so the slot's real width) may have just changed. */
     function tickerLayoutStale(items) {
       if (tickerReduceMotionQuery.matches) return false;
-      if (!tickerSlotPitch) return true;
+      const pitch = measureTickerSlotPitch();
+      if (!pitch) return true;
       const barWidth = tickerBarContentWidth();
-      const setWidth = items.length * tickerSlotPitch;
+      const setWidth = items.length * pitch;
       return Math.max(1, Math.ceil(barWidth / setWidth)) !== lastTickerK;
     }
 
