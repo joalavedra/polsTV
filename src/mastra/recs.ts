@@ -1,12 +1,12 @@
 /**
- * Scene -> "You might also like": when a NEW scene takes the air (never an amend — see
- * `sceneRecsJob`, the same rule `sceneChangeMessages` in telegram.ts follows for its own DM),
- * propose real titles with one LLM call (`writeRecsQuery` in showrunner.ts), verify them against
- * the catalog (catalog.ts), and keep the best 3. Stored per scene (last 10) so `GET recs` can
- * answer for whichever scene is on air right now.
+ * Scene -> "You might also like": propose real titles with one LLM call (`writeRecsQuery` in
+ * showrunner.ts), verify them against the catalog (catalog.ts), and keep the best 3. Stored per
+ * scene (last 10) so `GET recs` can answer for whichever scene is on air right now.
  *
- * `buildSceneRecs` never throws — index.ts runs it after responding to steer-result, fire-and-
- * forget, so a slow or failed write/lookup here must never hold up or fail the steer.
+ * `GET recs` is the ONLY trigger (`RecsStore.ensure`). A scene lasts 10 s (STEER_GAP_MS), so
+ * building for every scene would be one Nebius call plus up to eight catalog lookups every 10 s
+ * whether or not a single tv.html is open. Nothing here ever runs on the steer path, so a slow or
+ * failed write/lookup cannot hold up or fail a steer.
  */
 import type { CandidateTitle, CatalogItem } from "./catalog";
 import type { RecsQueryOutcome } from "./showrunner";
@@ -23,18 +23,6 @@ const PICKS_KEPT = 3;
 // Fewer than this many candidates verified against the real catalog and there isn't enough of a
 // "you might also like" rail to be worth showing — better empty than a lone, weak pick.
 const MIN_RESOLVED_TO_SHOW = 2;
-
-export interface AiredScene {
-  ideaId: number;
-  prompt: string;
-}
-
-/** A scene only gets fresh recs when it is a NEW scene taking the air, not an amend continuing the
- * same scene (which keeps whatever recs it already had) — the same rule notifySceneChange's
- * "you're on air" DM follows for the same reason (telegram.ts's sceneChangeMessages). */
-export function sceneRecsJob(onAir: AiredScene | undefined, amended: boolean): AiredScene | undefined {
-  return onAir && !amended ? onAir : undefined;
-}
 
 export interface RecsDeps {
   writeQuery: (scenePrompt: string) => Promise<RecsQueryOutcome>;
@@ -94,6 +82,7 @@ export async function buildSceneRecs(
  */
 export class RecsStore {
   private byScene = new Map<number, SceneRecs>();
+  private building = new Set<number>();
 
   set(recs: SceneRecs): void {
     this.byScene.delete(recs.sceneId);
@@ -104,8 +93,25 @@ export class RecsStore {
   get(sceneId: number): SceneRecs | undefined {
     return this.byScene.get(sceneId);
   }
+
+  /**
+   * This scene's picks, starting the one build for it if nobody has asked yet. Returns `undefined`
+   * until that build lands; tv.html polls, so the next poll a second later gets them. An amend
+   * keeps the scene's `ideaId`, so it reuses the same entry rather than paying for a new one.
+   *
+   * `buildSceneRecs` never rejects and stores empty picks on failure, so a scene costs at most one
+   * attempt however many viewers are polling and however badly it goes.
+   */
+  ensure(deps: RecsDeps, sceneId: number, scenePrompt: string): SceneRecs | undefined {
+    const known = this.byScene.get(sceneId);
+    if (known || this.building.has(sceneId)) return known;
+    this.building.add(sceneId);
+    void buildSceneRecs(deps, sceneId, scenePrompt)
+      .then((recs) => this.set(recs))
+      .finally(() => this.building.delete(sceneId));
+    return undefined;
+  }
 }
 
-/** The one shared store for this process. index.ts writes to it once a scene airs and reads it for
- * GET recs. */
+/** The one shared store for this process, read and filled by GET recs (index.ts). */
 export const recsStore = new RecsStore();

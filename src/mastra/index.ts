@@ -14,7 +14,7 @@ import { detailsById, lookupCandidates } from "./catalog";
 import { concierge, handleTvAsk, runConciergeLive, type TvAskDeps, type TvAskInput } from "./concierge";
 import { handleEval, type EvalDeps } from "./eval";
 import { livePitchDeps, PITCH_MIN_KARMA, pitchSlot, submitPitch } from "./pitch";
-import { buildSceneRecs, type RecsDeps, recsStore, sceneRecsJob } from "./recs";
+import { type RecsDeps, recsStore } from "./recs";
 import type { SteerWriteOutcome } from "./showrunner";
 import { handleSay, type SayDeps, type SayInput } from "./say";
 import {
@@ -260,16 +260,6 @@ const recsDeps: RecsDeps = {
   recordTokens: (sceneId, usage) => spend.recordSceneTokens(sceneId, usage),
 };
 
-/** After a NEW scene airs (never an amend — see sceneRecsJob), turn it into "you might also like"
- * picks. Runs after the steer-result response goes out; never blocks or fails the steer. */
-async function refreshSceneRecs(scene: { ideaId: number; prompt: string }): Promise<void> {
-  try {
-    recsStore.set(await buildSceneRecs(recsDeps, scene.ideaId, scene.prompt));
-  } catch (error) {
-    console.error(`recs failed for scene ${scene.ideaId}, showing none:`, error);
-  }
-}
-
 /** What the concierge is told about "what's on now": the scene on air and its own mood line, for
  * when a viewer says "like this" or "something like what's on now". */
 function onAirContext(): { text: string; moodLine?: string } | undefined {
@@ -433,15 +423,18 @@ export const mastra = new Mastra({
         handler: async (c) => c.json(spend.snapshot()),
       }),
 
-      // "You might also like": the current scene's picks, for tv.html's rail. Empty picks when
-      // nothing is on air or nothing verified against the catalog (recs.ts).
+      // "You might also like": the current scene's picks, for tv.html's rail. Asking is what
+      // builds them (recsStore.ensure) — a channel nobody is watching on tv.html spends nothing on
+      // recs. Empty picks while the first build for a scene is still running, when nothing is on
+      // air, or when nothing verified against the catalog.
       registerApiRoute("/recs", {
         method: "GET",
         requiresAuth: false,
         handler: async (c) => {
-          const nowIdeaId = channel.status().now?.ideaId;
-          const recs = nowIdeaId !== undefined ? recsStore.get(nowIdeaId) : undefined;
-          return c.json(recs ?? { sceneId: nowIdeaId ?? null, moodLine: "", picks: [] });
+          const now = channel.status().now;
+          if (!now) return c.json({ sceneId: null, moodLine: "", picks: [] });
+          const recs = recsStore.ensure(recsDeps, now.ideaId, now.prompt);
+          return c.json(recs ?? { sceneId: now.ideaId, moodLine: "", picks: [] });
         },
       }),
 
@@ -699,8 +692,6 @@ export const mastra = new Mastra({
             else spend.markNotAired(pendingBefore.ideaId);
           }
           void notifySceneChange({ onAir, ended, amended });
-          const recsJob = sceneRecsJob(onAir, amended);
-          if (recsJob) void refreshSceneRecs(recsJob);
           return c.json({ ok: true, onAir: onAir?.ideaId ?? null });
         },
       }),

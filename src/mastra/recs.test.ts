@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CatalogItem } from "./catalog";
-import { buildSceneRecs, pickBest, type RecsDeps, RecsStore, sceneRecsJob } from "./recs";
+import { buildSceneRecs, pickBest, type RecsDeps, RecsStore } from "./recs";
 
 const ZERO_USAGE = { inputTokens: 0, outputTokens: 0 };
 
@@ -37,17 +37,46 @@ function deps(overrides: Partial<RecsDeps> = {}): RecsDeps {
   };
 }
 
-describe("sceneRecsJob", () => {
-  it("returns the scene when a new scene takes the air", () => {
-    expect(sceneRecsJob({ ideaId: 7, prompt: "a cat" }, false)).toEqual({ ideaId: 7, prompt: "a cat" });
+/** Lets `ensure`'s fire-and-forget build settle before the assertions run. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe("RecsStore.ensure", () => {
+  it("returns nothing on the first ask and the picks once the build lands", async () => {
+    const store = new RecsStore();
+    const d = deps();
+    expect(store.ensure(d, 7, "a cat runs a laundrette")).toBeUndefined();
+    await settle();
+    expect(store.ensure(d, 7, "a cat runs a laundrette")?.picks).toHaveLength(2);
+    expect(d.writeQuery).toHaveBeenCalledTimes(1);
   });
 
-  it("returns undefined for an amend (the scene keeps whatever recs it already had)", () => {
-    expect(sceneRecsJob({ ideaId: 7, prompt: "a cat" }, true)).toBeUndefined();
+  it("builds a scene once however many times it is polled while in flight", async () => {
+    const store = new RecsStore();
+    const d = deps();
+    for (let i = 0; i < 5; i += 1) store.ensure(d, 7, "a cat");
+    await settle();
+    expect(d.writeQuery).toHaveBeenCalledTimes(1);
   });
 
-  it("returns undefined when nothing went on air (a rejected steer)", () => {
-    expect(sceneRecsJob(undefined, false)).toBeUndefined();
+  it("does not retry a scene whose build failed: one attempt, then cached empty picks", async () => {
+    const store = new RecsStore();
+    const d = deps({
+      writeQuery: vi.fn(async () => {
+        throw new Error("nebius down");
+      }),
+    });
+    expect(store.ensure(d, 7, "a cat")).toBeUndefined();
+    await settle();
+    expect(store.ensure(d, 7, "a cat")).toEqual({ sceneId: 7, moodLine: "", picks: [] });
+    store.ensure(d, 7, "a cat");
+    await settle();
+    expect(d.writeQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("spends nothing on a scene nobody asks about", () => {
+    const d = deps();
+    new RecsStore().set({ sceneId: 7, moodLine: "", picks: [] });
+    expect(d.writeQuery).not.toHaveBeenCalled();
   });
 });
 
