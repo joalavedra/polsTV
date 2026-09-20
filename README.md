@@ -135,7 +135,7 @@ A bar of photo slots sits along the bottom of the viewer page (`public/index.htm
 viewport edge, outside the video — it never touches the broadcast picture itself, so it's absent
 from the published stream and from recordings. Message
 [@timesquarescreenbot](https://t.me/timesquarescreenbot) a photo, optionally with a caption, and —
-once it clears moderation — it takes the next slot for 5 seconds. The bot picks the smallest
+once it clears moderation — it takes the next slot for 30 seconds. The bot picks the smallest
 Telegram-provided size whose shorter side is at least 240px (never the original), refuses anything
 over 1 MB or not JPEG/PNG/WEBP by magic bytes, and moderates the image on a Nebius vision model
 before it is ever stored; a rejection or a moderation error/timeout both refuse the photo. One

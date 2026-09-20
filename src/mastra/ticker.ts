@@ -19,12 +19,12 @@ export interface TickerItem {
 }
 
 export const TICKER_MAX_ITEMS = 12;
-/** 5 s on screen plus one TICKER_POLL_MS poll interval (see index.html), so every viewer sees
- * roughly the same 5 s life for a photo regardless of where their poll lands. */
-export const TICKER_ITEM_TTL_MS = 6_000;
+/** 30 s on screen plus one TICKER_POLL_MS poll interval (see index.html), so every viewer sees
+ * roughly the same 30 s life for a photo regardless of where their poll lands. */
+export const TICKER_ITEM_TTL_MS = 31_000;
 /**
  * Decoupled from TICKER_ITEM_TTL_MS: each accepted photo costs a moderation call, so the
- * cooldown can't drop to the same 5 s as the on-screen life. Still enforces "a user has one live
+ * cooldown can't drop to the same 30 s as the on-screen life. Still enforces "a user has one live
  * item at a time" (see add()).
  */
 export const TICKER_COOLDOWN_MS = 15_000;
