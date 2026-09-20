@@ -98,8 +98,21 @@ const pitchResultBody = z.object({
   played: z.boolean(),
   reason: z.string().max(200).optional(),
 });
-// Same charset the ids synthesise() hands out use: "steer-<ideaId>" or "pitch-<id>".
-const clipStartedBody = z.object({ clipId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/) });
+// Same charset the ids synthesise() hands out use: "steer-<ideaId>" or "pitch-<id>". `seconds` is
+// the clip's real duration (broadcaster.html's buffer.duration): left untyped here, not rejected,
+// so an old broadcaster tab that never learned this field (or sends garbage) cannot 400 the route —
+// clipSeconds() below is what actually validates it, falling back to a reasonable guess instead.
+const clipStartedBody = z.object({
+  clipId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  seconds: z.unknown().optional(),
+});
+
+const FALLBACK_CLIP_SECONDS = 10;
+
+/** A missing or out-of-range `seconds` falls back rather than failing the request (see above). */
+function clipSeconds(raw: unknown): number {
+  return typeof raw === "number" && raw > 0 && raw <= 60 ? raw : FALLBACK_CLIP_SECONDS;
+}
 
 // Which HTTP status each refusal from pitch.ts is worth. Everything else is a 200.
 const pitchStatus = {
@@ -608,7 +621,7 @@ export const mastra = new Mastra({
 
       // The broadcaster calls this the moment a clip actually starts playing, so the on-screen AD
       // banner (ad-banner.ts) lands in step with the voice instead of the 17 s scheduling delay
-      // upstream of it.
+      // upstream of it, and stays up for the clip's own real length.
       registerApiRoute("/b/:secret/clip-started", {
         method: "POST",
         requiresAuth: false,
@@ -618,7 +631,7 @@ export const mastra = new Mastra({
           if (!body.success) return c.json({ ok: false }, 400);
           const line = clipLine(body.data.clipId);
           if (line === undefined) return c.notFound();
-          adBanner.start(line);
+          adBanner.start(line, clipSeconds(body.data.seconds) * 1000);
           return c.json({ ok: true });
         },
       }),

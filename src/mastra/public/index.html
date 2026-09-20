@@ -759,13 +759,13 @@
   }
   #say-btn:disabled, #say-input:disabled { opacity: .6; cursor: not-allowed; }
 
-  /* adbanner:start — on-screen AD slate, up while the channel's voice reads an ad (10 s hard
-     stop, server-side). Self-contained, safe to drop in a conflict. Stacks directly above the
-     photo banner via the shared --ticker-h/--ticker-bottom layout contract: --ticker-h (declared
-     on :root, ticker:start above) is the photo banner's own height, and --ticker-bottom (a
-     sibling agent's contract, possibly absent in this worktree) is how far its bottom edge sits
-     above the viewport bottom. The fallbacks below make this banner sit correctly on its own
-     either way: 0 on desktop, the pinned input bar's height on phones. */
+  /* adbanner:start — on-screen AD slate, up for as long as the clip the channel's voice is
+     reading (server-side, ad-banner.ts). Self-contained, safe to drop in a conflict. Stacks
+     directly above the photo banner via the shared --ticker-h/--ticker-bottom layout contract:
+     --ticker-h (declared on :root, ticker:start above) is the photo banner's own height, and
+     --ticker-bottom (a sibling agent's contract, possibly absent in this worktree) is how far its
+     bottom edge sits above the viewport bottom. The fallbacks below make this banner sit correctly
+     on its own either way: 0 on desktop, the pinned input bar's height on phones. */
   /* --ad-h: this slate's measured height while it shows (set by renderAdBanner), 0px otherwise.
      The stage caption and the action rail add it to --ticker-h so they clear both banners. */
   :root { --ad-h: 0px; }
@@ -779,7 +779,7 @@
     bottom: calc(var(--ticker-bottom, 0px) + var(--ticker-h, 0px));
     z-index: 18;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: .7rem;
     background: #000;
     border-top: 4px solid #ff2ec4;
@@ -805,17 +805,17 @@
     padding: .25rem .55rem;
     border-radius: 4px;
   }
+  /* No clamp: the read is short (20 words max) but must never lose a word, so it wraps onto as
+     many lines as it needs (typically 1-2 on desktop, 3-4 on phones) instead of truncating. */
   #ad-banner-line {
     flex: 1;
     min-width: 0;
     margin: 0;
     color: #fff200;
     font-weight: 700;
-    font-size: .85rem;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+    font-size: .9rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
   }
   #ad-banner-bar {
     position: absolute;
@@ -827,7 +827,13 @@
     transform: scaleX(1);
     transform-origin: left;
   }
-  #ad-banner-bar.ad-banner-draining { transition: transform 10s linear; transform: scaleX(0); }
+  /* Duration is set inline per ad (renderAdBanner) since it lasts as long as the clip, not a fixed
+     10 s; only the property and easing are declared here. */
+  #ad-banner-bar.ad-banner-draining {
+    transition-property: transform;
+    transition-timing-function: linear;
+    transform: scaleX(0);
+  }
   @media (prefers-reduced-motion: reduce) {
     #ad-banner { transition: none; }
     #ad-banner-bar.ad-banner-draining { transition: none; transform: scaleX(1); }
@@ -3040,14 +3046,20 @@
       if (name) setText(youKarma, String(myKarma));
     }
 
-    // adbanner:start — on-screen AD slate, up while the channel's voice reads an ad. Self-contained;
-    // renderStatus calls renderAdBanner once, right after the pitch line's own render call.
-    const AD_BANNER_MS = 10_000;
+    // adbanner:start — on-screen AD slate, up for as long as the clip the channel's voice is
+    // reading. Self-contained; renderStatus calls renderAdBanner once, right after the pitch
+    // line's own render call.
     const adBanner = document.getElementById("ad-banner");
     const adBannerLine = document.getElementById("ad-banner-line");
     const adBannerBar = document.getElementById("ad-banner-bar");
     let adBannerEndsAt = null;
     let adBannerHideTimer = null;
+    let adBannerResizeHandler = null;
+
+    function measureAdBannerHeight() {
+      // The caption and the action rail clear this slate by its real, wrapped height.
+      document.documentElement.style.setProperty("--ad-h", `${adBanner.offsetHeight}px`);
+    }
 
     function hideAdBanner() {
       if (adBannerHideTimer) clearTimeout(adBannerHideTimer);
@@ -3056,23 +3068,36 @@
       adBanner.classList.remove("ad-banner-show");
       adBanner.hidden = true;
       document.documentElement.style.setProperty("--ad-h", "0px");
+      if (adBannerResizeHandler) window.removeEventListener("resize", adBannerResizeHandler);
+      adBannerResizeHandler = null;
     }
 
-    function renderAdBanner(ad) {
+    // `serverNow` is the same /status response's `ts`: the ad's remaining time is always computed
+    // from the server's own clock (`ad.endsAt - serverNow`), never the viewer's `Date.now()`
+    // against `endsAt` — the two clocks can differ.
+    function renderAdBanner(ad, serverNow) {
       if (!ad) return hideAdBanner();
       if (ad.endsAt === adBannerEndsAt) return; // same ad still airing, nothing to do
       adBannerEndsAt = ad.endsAt;
+      const remainingMs = Math.max(0, ad.endsAt - serverNow);
       adBannerLine.textContent = ad.line;
       adBanner.hidden = false;
-      // The caption and the action rail clear this slate by its real height (one or two lines).
-      document.documentElement.style.setProperty("--ad-h", `${adBanner.offsetHeight}px`);
+      // Measured only now, after the text is set and the slate is unhidden and laid out.
+      measureAdBannerHeight();
+      if (!adBannerResizeHandler) {
+        adBannerResizeHandler = () => {
+          if (!adBanner.hidden) measureAdBannerHeight();
+        };
+        window.addEventListener("resize", adBannerResizeHandler);
+      }
       adBannerBar.classList.remove("ad-banner-draining");
       void adBannerBar.offsetWidth; // restart the drain transition for a new ad
+      adBannerBar.style.transitionDuration = `${remainingMs}ms`;
       adBannerBar.classList.add("ad-banner-draining");
       requestAnimationFrame(() => adBanner.classList.add("ad-banner-show"));
       // Belt and braces against a stalled poll: hides itself even if /status stops updating.
       if (adBannerHideTimer) clearTimeout(adBannerHideTimer);
-      adBannerHideTimer = setTimeout(hideAdBanner, AD_BANNER_MS);
+      adBannerHideTimer = setTimeout(hideAdBanner, remainingMs);
     }
     // adbanner:end
 
@@ -3210,7 +3235,7 @@
       renderAmendToggle(status.now); // amend
       renderLikeButton();
       renderPitchBadge(status.pitch); // pitch
-      renderAdBanner(status.ad); // adbanner
+      renderAdBanner(status.ad, status.ts); // adbanner
       setText(viewerCount, `${status.viewers} watching`);
       renderSteering(status.steering);
       syncList(railQueue, status.queue, (q) => q.id, renderQueueItem);
