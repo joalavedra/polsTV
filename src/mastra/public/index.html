@@ -187,20 +187,6 @@
     border: 2px solid rgba(255, 255, 255, .65);
     box-shadow: 0 1px 4px rgba(0, 0, 0, .55);
   }
-  #pitch-btn.is-locked .rail-icon { opacity: .55; }
-  #pitch-btn.is-locked .rail-icon::after {
-    content: "3★";
-    position: absolute;
-    bottom: -4px;
-    right: -8px;
-    background: var(--accent);
-    color: #fff;
-    font-size: .58rem;
-    font-weight: 700;
-    padding: .05rem .32rem;
-    border-radius: 999px;
-    border: 1px solid var(--bg);
-  }
   #spend-amount { font-size: .62rem; font-weight: 700; padding: 0 .15rem; text-align: center; }
 
   /* Pure-TV restore control: invisible until chrome-hidden, then fades in on pointer/touch
@@ -1001,8 +987,8 @@
   }
   /* ticker:end */
 
-  /* pitch:start — karma-gated sponsored voice-over. Self-contained, safe to drop in a conflict.
-     #pitch-btn's own look now comes from .rail-item/.rail-icon (action-rail, above) and
+  /* pitch:start — sponsored voice-over, open to everyone. Self-contained, safe to drop in a
+     conflict. #pitch-btn's own look now comes from .rail-item/.rail-icon (action-rail, above) and
      .sheet-row (#more-pitch-btn, the mobile overflow-sheet entry point). */
   #pitch-modal {
     position: fixed;
@@ -1642,7 +1628,7 @@
       <div id="more-sheet-handle" aria-hidden="true"></div>
       <!-- pitch:start -->
       <button type="button" class="sheet-row" id="more-pitch-btn">
-        <span>Pitch</span><span class="sheet-row-value" id="more-pitch-state">3&#9733; to unlock</span>
+        <span>Pitch</span><span class="sheet-row-value" id="more-pitch-state">ready</span>
       </button>
       <!-- pitch:end -->
       <button type="button" class="sheet-row" id="more-spend-btn" aria-haspopup="dialog"
@@ -2435,15 +2421,12 @@
       trySay();
     });
 
-    // pitch:start — karma-gated sponsored voice-over. Self-contained; renderStatus calls
+    // pitch:start — sponsored voice-over, open to everyone. Self-contained; renderStatus calls
     // renderPitchBadge, everything else lives here. Two entry points share this state: the round
     // rail button (desktop, always visible) and the "Pitch" row in mobile's more-sheet.
-    const PITCH_MIN_KARMA = 3;
     const ME_POLL_MS = 5000;
     const pitchBtn = document.getElementById("pitch-btn");
-    const pitchBtnLabel = document.getElementById("pitch-btn-label");
     const morePitchBtn = document.getElementById("more-pitch-btn");
-    const morePitchState = document.getElementById("more-pitch-state");
     const pitchModal = document.getElementById("pitch-modal");
     const pitchForm = document.getElementById("pitch-form");
     const pitchInput = document.getElementById("pitch-input");
@@ -2451,16 +2434,6 @@
     const pitchSubmit = document.getElementById("pitch-submit");
     let myKarma = 0;
     let pitchCooldownSeconds = 0;
-
-    function renderPitchButton() {
-      const locked = myKarma < PITCH_MIN_KARMA;
-      pitchBtnLabel.textContent = locked ? `${PITCH_MIN_KARMA}★` : "pitch";
-      pitchBtn.classList.toggle("is-locked", locked);
-      pitchBtn.title = locked
-        ? `${PITCH_MIN_KARMA} karma lets you instruct the channel's voice. You have ${myKarma}.`
-        : "Have the channel's voice sell something of yours";
-      morePitchState.textContent = locked ? `${PITCH_MIN_KARMA}★ to unlock` : "ready";
-    }
 
     function renderPitchBadge(pitch) {
       stageCaptionVoice.hidden = !pitch;
@@ -2475,16 +2448,10 @@
         const me = await res.json();
         myKarma = me.karma;
         pitchCooldownSeconds = me.pitchCooldownSeconds;
-        renderPitchButton();
       } catch { /* transient network hiccup, next tick retries */ }
     }
 
     function openPitchModal() {
-      if (myKarma < PITCH_MIN_KARMA) {
-        const short = PITCH_MIN_KARMA - myKarma;
-        showToast(`${short} more karma unlocks the voice — likes on your scenes are karma.`);
-        return;
-      }
       if (pitchCooldownSeconds > 0) {
         showToast(`One pitch every 3 minutes: ${pitchCooldownSeconds}s left.`);
         return;
@@ -2526,7 +2493,6 @@
       const brief = pitchInput.value.trim();
       if (brief) sendPitch(brief);
     });
-    renderPitchButton();
     refreshMe();
     setInterval(refreshMe, ME_POLL_MS);
     // pitch:end

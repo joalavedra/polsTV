@@ -57,7 +57,7 @@ viewer subscribes to.
 
 The channel's voice only speaks for an ad. When a viewer's idea reads as a request to create or
 broadcast an ad — `isAdIdea()` in `showrunner.ts`, a keyword check covering English, Catalan and
-Spanish — the same ad-writing agent behind the karma-gated pitch (below) writes a high-energy
+Spanish — the same ad-writing agent behind the pitch (below) writes a high-energy
 infomercial read for it: a hook, the invented product named and revealed, one absurdly specific
 benefit, and a tagline, opening "A word from Timba." SLNG's `slng/fish/tts:s2.1-pro` gets a leading
 `[excited]` tone marker in the text, a silent control tag it does not read aloud (verified live by
@@ -66,9 +66,9 @@ time-boxed at 8 seconds, and the steer simply airs silent — no clip at all —
 timeout, a write failure, an empty read, or a TTS failure. The written line is capped at 25 words in
 code, since the clip has to finish before the next steer arrives.
 
-The same voice is also the karma reward. At 3 karma a viewer unlocks the pitch: they send a brief
-of up to 140 characters ("sell my lemonade stand, aggressively") and the channel reads the same
-kind of ad for it over whatever is on air, opening "A word from Timba." The brief and the nickname
+The same voice also reads the pitch, open to any viewer: they send a brief of up to 140 characters
+("sell my lemonade stand, aggressively") and the channel reads the same kind of ad for it over
+whatever is on air, opening "A word from Timba." The brief and the nickname
 go through their own moderation rubric first — no real brands, people, prices, claims or URLs — and
 the written read is capped at the same 25 words with anything URL-like stripped out. One pitch is
 on air or pending at a time, one per viewer every three minutes, and a pitch nobody collects within
@@ -144,7 +144,7 @@ older — and the ticker holds at most 12 items. Text messages to the bot are un
 | **Nebius Token Factory** | Five jobs through Mastra's `nebius/<model>` router, all on `Qwen/Qwen3-30B-A3B-Instruct-2507`: moderating every idea and nickname, writing the steering prompt that transitions from the current scene, writing an amend's one-thing change, moderating a pitch brief against its own rubric, and writing the ad read shared by the pitch and by any steer whose idea asks for an ad. A sixth job, `nebius/openbmb/MiniCPM-V-4_5`, moderates every ticker photo before it is stored. |
 | **Mastra** | The backend framework: six agents (`moderator`, `sceneWriter`, `amendWriter`, `pitchModerator`, `pitchWriter`, `showrunner`), a Telegram channel via `@chat-adapter/telegram` in polling mode, per-user `Memory` (last 10 messages) on LibSQL storage, and the `registerApiRoute()` custom routes that serve the whole HTTP contract plus both static pages. A voice note to the bot is transcribed before it reaches the showrunner, so every tool works by voice too. |
 | **Vonage Video API** | Fan-out: one routed session. The broadcaster publishes a canvas-plus-WebAudio `MediaStreamTrack` with `OT.initPublisher`; every viewer connects with a subscribe-only token from `GET /viewer-token`. |
-| **SLNG** | `slng/fish/tts:s2.1-pro` on `eu-west.api.slng.ai` synthesises the channel's voice — the ad read for a steer whose idea asks for an ad, and the sponsored ad read a viewer unlocks at 3 karma — mixed into the published audio one clip at a time, ducking Director's own audio while it plays. Voice notes to the bot are transcribed with SLNG. |
+| **SLNG** | `slng/fish/tts:s2.1-pro` on `eu-west.api.slng.ai` synthesises the channel's voice — the ad read for a steer whose idea asks for an ad, and the sponsored ad read from any viewer's pitch — mixed into the published audio one clip at a time, ducking Director's own audio while it plays. Voice notes to the bot are transcribed with SLNG. |
 | **Galtea** | Adversarial evaluation of the moderator: a SECURITY dataset red-teamed the real-person rule, and the run found it missed a real person when the idea was written in Spanish. Fixed and re-run before/after — see `docs/eval/GALTEA.md`. |
 
 ### Evaluation
@@ -217,7 +217,7 @@ the event; fal's list price is $0.08/s. Keep `?director=off` on until you mean t
 src/mastra/
 ├── index.ts               Routes, Mastra instance, broadcaster-secret gate, fal-proxy wiring
 ├── channel.ts             In-memory state machine: idea queue, steer lifecycle, likes, karma
-├── pitch.ts               The karma-gated sponsored voice-over: slot, cooldown, deadline
+├── pitch.ts               The sponsored voice-over: slot, cooldown, deadline
 ├── showrunner.ts          The five Nebius agents: moderation, steering, amends, the pitch and ad
 ├── announcer.ts           SLNG TTS: synthesises and serves the spoken clips
 ├── telegram.ts            Telegram channel: showrunner agent, its tools, proactive DMs

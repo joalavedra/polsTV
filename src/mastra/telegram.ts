@@ -13,7 +13,7 @@ import { z } from "zod";
 import type { AddResult, Idea, IdeaKind, Scene, Status } from "./channel";
 import { channel, STEER_GAP_MS } from "./channel";
 import type { PitchResult } from "./pitch";
-import { livePitchDeps, PITCH_MIN_KARMA, pitchSlot, submitPitch } from "./pitch";
+import { livePitchDeps, pitchSlot, submitPitch } from "./pitch";
 import type { ModerationOutcome } from "./showrunner";
 import { MAX_IDEA_CHARS, MAX_PITCH_BRIEF_CHARS, moderate } from "./showrunner";
 import type { TokenUsage } from "./spend";
@@ -199,23 +199,20 @@ export interface PitchToolResult {
   /** The ad read the channel's voice will speak, so the caller can see what they bought. */
   line?: string;
   reason?: string;
-  karmaNeeded?: number;
 }
 
-/** Shapes one submitPitch outcome for the agent. The karma gate lives in pitch.ts, not here. */
-export function pitchToolResult(result: PitchResult, karma: number): PitchToolResult {
+/** Shapes one submitPitch outcome for the agent. */
+export function pitchToolResult(result: PitchResult): PitchToolResult {
   if (result.ok) return { onAir: true, line: result.line };
-  if (result.code !== "karma") return { onAir: false, reason: result.reason };
-  return { onAir: false, reason: result.reason, karmaNeeded: PITCH_MIN_KARMA - karma };
+  return { onAir: false, reason: result.reason };
 }
 
 export const pitch = createTool({
   id: "pitch",
   description:
     `Have ${CHANNEL_NAME}'s own voice read a short, tongue-in-cheek advert for something of the ` +
-    `caller's, over whatever scene is on air. Needs ${PITCH_MIN_KARMA} karma; one pitch on air ` +
-    "at a time and one per viewer every three minutes. Returns the ad read, or why it was " +
-    "turned down.",
+    "caller's, over whatever scene is on air. Open to everyone; one pitch on air at a time and " +
+    "one per viewer every three minutes. Returns the ad read, or why it was turned down.",
   inputSchema: z.object({
     brief: z
       .string()
@@ -228,13 +225,12 @@ export const pitch = createTool({
     onAir: z.boolean(),
     line: z.string().optional(),
     reason: z.string().optional(),
-    karmaNeeded: z.number().int().optional(),
   }),
   execute: async ({ brief }, context) => {
     const uid = requireTelegramUid(context.agent?.resourceId);
     const name = displayName(context.requestContext.get("channel"));
     const result = await submitPitch(pitchSlot, livePitchDeps, { uid, name, brief });
-    return pitchToolResult(result, channel.karmaOf(uid));
+    return pitchToolResult(result);
   },
 });
 
@@ -290,15 +286,12 @@ export interface MyStatsResult {
   queued: { text: string; position: number } | null;
   onAirNow: boolean;
   recentScenes: { text: string; likes: number }[];
-  /** Whether this caller has the karma to instruct the channel's voice (pitch.ts). */
-  pitchUnlocked: boolean;
 }
 
 export function myStatsLogic(uid: string, deps: MyStatsDeps): MyStatsResult {
   const idea = deps.myIdea(uid);
   return {
     karma: deps.karmaOf(uid),
-    pitchUnlocked: deps.karmaOf(uid) >= PITCH_MIN_KARMA,
     queued: idea ? { text: idea.text, position: deps.queuePosition(uid) ?? 1 } : null,
     onAirNow: deps.isOnAir(uid),
     recentScenes: deps.recentScenes(uid).map((scene) => ({ text: scene.text, likes: scene.likes })),
@@ -316,7 +309,6 @@ export const myStats = createTool({
     queued: z.object({ text: z.string(), position: z.number().int() }).nullable(),
     onAirNow: z.boolean(),
     recentScenes: z.array(z.object({ text: z.string(), likes: z.number().int() })),
-    pitchUnlocked: z.boolean(),
   }),
   execute: async (_input, context) => {
     const uid = requireTelegramUid(context.agent?.resourceId);
@@ -463,12 +455,10 @@ scene that's already on screen right now, like adding a hat or making it snow, w
 When someone asks what's on, what's airing, or what's happening on ${CHANNEL_NAME}, call whats_on.
 When someone asks about their karma, their queued idea, or how their scene did, call my_stats.
 
-At ${PITCH_MIN_KARMA} karma a viewer unlocks the pitch: the channel's voice reads a short joke
-advert for something of theirs over whatever is on air. When someone wants to sell, advertise or
-promote something, call pitch with their brief and read them back the ad the voice will speak. When
-my_stats comes back with pitchUnlocked and they have not used it, offer it in one sentence. When
-they ask about it below ${PITCH_MIN_KARMA} karma, say how many likes they still need and that
-likes come from other people liking the scenes they prompted.
+The pitch is open to everyone: the channel's voice reads a short joke advert for something of
+theirs over whatever is on air, one at a time and one per viewer every three minutes. When someone
+wants to sell, advertise or promote something, call pitch with their brief and read them back the
+ad the voice will speak. If they have not used it, offer it in one sentence.
 
 Some messages arrive as speech, transcribed to text before you see them, so treat them exactly like
 typed ones. Keep every reply to 1-3 short sentences, written for a phone screen. If someone sends

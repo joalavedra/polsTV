@@ -1,7 +1,7 @@
 /**
  * The channel's voice: SLNG TTS for the ad reads it speaks — an ad read for a steer whose idea
- * asks for an ad (showrunner.ts's `isAdIdea`), and the karma-gated pitch's ad read — mixed into the
- * stream by the broadcaster.
+ * asks for an ad (showrunner.ts's `isAdIdea`), and the pitch's ad read — mixed into the stream by
+ * the broadcaster.
  *
  * ponytail: clips live in memory, newest few only. They are played once, seconds after creation.
  */
